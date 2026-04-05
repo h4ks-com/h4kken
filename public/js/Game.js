@@ -1,0 +1,780 @@
+// ============================================================
+// H4KKEN - Game Manager (Main Game Loop, State, Round Logic)
+// ============================================================
+
+import * as THREE from 'three';
+import { Fighter } from './Fighter.js';
+import { CombatSystem, FIGHTER_STATE, GAME_CONSTANTS } from './Combat.js';
+import { InputManager } from './Input.js';
+import { FightCamera } from './Camera.js';
+import { Stage } from './Stage.js';
+import { UI } from './UI.js';
+import { Network } from './Network.js';
+
+const GC = GAME_CONSTANTS;
+
+export const GAME_STATE = {
+  LOADING: 'loading',
+  MENU: 'menu',
+  WAITING: 'waiting',
+  COUNTDOWN: 'countdown',
+  FIGHTING: 'fighting',
+  ROUND_END: 'roundEnd',
+  MATCH_END: 'matchEnd',
+  PRACTICE: 'practice',
+};
+
+export class Game {
+  constructor() {
+    this.state = GAME_STATE.LOADING;
+    this.canvas = document.getElementById('game-canvas');
+
+    // Three.js setup
+    this.renderer = new THREE.WebGLRenderer({
+      canvas: this.canvas,
+      antialias: true,
+      alpha: false,
+    });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.2;
+
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+
+    // Modules
+    this.input = new InputManager();
+    this.fightCamera = new FightCamera(this.camera);
+    this.stage = null;
+    this.ui = new UI();
+    this.network = new Network();
+
+    // Fighters
+    this.fighters = [null, null];
+    this.localPlayerIndex = 0; // Updated on match
+    this.sharedAssets = null;
+
+    // Round state
+    this.round = 1;
+    this.roundTimer = GC.ROUND_TIME;
+    this.roundTimerAccum = 0;
+    this.isPractice = false;
+
+    // Hit sparks (3D particles)
+    this.hitParticles = [];
+
+    // Game loop timing
+    this.clock = new THREE.Clock();
+    this.tickRate = 60;
+    this.tickDuration = 1 / this.tickRate;
+    this.accumulator = 0;
+    this.frame = 0;
+
+    // Opponent input tracking (for online play)
+    this.pendingOpponentInput = null;
+    this.lastOpponentInput = this.emptyInput();
+
+    // Bind
+    this.gameLoop = this.gameLoop.bind(this);
+    this.onResize = this.onResize.bind(this);
+    window.addEventListener('resize', this.onResize);
+
+    this.setupUIEvents();
+    this.setupNetworkEvents();
+  }
+
+  emptyInput() {
+    return {
+      up: false, down: false, left: false, right: false,
+      lp: false, rp: false, lk: false, rk: false,
+      upJust: false, downJust: false, leftJust: false, rightJust: false,
+      lpJust: false, rpJust: false, lkJust: false, rkJust: false,
+      dashLeft: false, dashRight: false,
+      sideStepUp: false, sideStepDown: false,
+    };
+  }
+
+  setupUIEvents() {
+    this.ui.btnFindMatch.addEventListener('click', () => this.findMatch());
+    this.ui.btnPractice.addEventListener('click', () => this.startPractice());
+    this.ui.btnControls.addEventListener('click', () => this.ui.showScreen('controls-screen'));
+    this.ui.btnBackControls.addEventListener('click', () => this.ui.showScreen('menu-screen'));
+    this.ui.btnCancelSearch.addEventListener('click', () => this.cancelSearch());
+  }
+
+  setupNetworkEvents() {
+    this.network.on('waiting', () => {
+      this.ui.showScreen('waiting-screen');
+    });
+
+    this.network.on('matched', (msg) => {
+      this.localPlayerIndex = msg.playerIndex;
+      const myName = this.ui.playerNameInput.value || 'Player';
+      const p1Name = msg.playerIndex === 0 ? myName : msg.opponentName;
+      const p2Name = msg.playerIndex === 1 ? myName : msg.opponentName;
+      this.ui.setPlayerNames(p1Name, p2Name);
+      this.ui.hideAllScreens();
+      this.ui.showFightHud();
+      this.prepareMatch();
+    });
+
+    this.network.on('countdown', (msg) => {
+      if (msg.count > 0) {
+        this.ui.showAnnouncement(`ROUND ${this.round}`, msg.count.toString(), 900);
+      }
+      this.state = GAME_STATE.COUNTDOWN;
+    });
+
+    this.network.on('fight', () => {
+      this.ui.showAnnouncement('FIGHT!', '', 1000);
+      this.state = GAME_STATE.FIGHTING;
+    });
+
+    this.network.on('opponentInput', (msg) => {
+      this.pendingOpponentInput = msg.input;
+    });
+
+    // P2 receives authoritative game state from P1
+    this.network.on('gameState', (msg) => {
+      if (this.localPlayerIndex === 1 && msg.state) {
+        const { p1, p2 } = msg.state;
+        if (p1 && this.fighters[0]) this.fighters[0].deserializeState(p1);
+        if (p2 && this.fighters[1]) this.fighters[1].deserializeState(p2);
+        if (msg.state.timer !== undefined) {
+          this.roundTimer = msg.state.timer;
+          this.ui.updateTimer(this.roundTimer);
+        }
+        if (msg.state.round !== undefined) {
+          this.round = msg.state.round;
+        }
+      }
+    });
+
+    this.network.on('opponentLeft', () => {
+      this.ui.showAnnouncement('OPPONENT LEFT', '', 3000);
+      setTimeout(() => {
+        this.state = GAME_STATE.MENU;
+        this.ui.showScreen('menu-screen');
+        this.ui.hideFightHud();
+        this.ui.hideAnnouncement();
+      }, 3000);
+    });
+
+    this.network.on('disconnected', () => {
+      if (this.state !== GAME_STATE.MENU && this.state !== GAME_STATE.LOADING) {
+        this.ui.showAnnouncement('DISCONNECTED', '', 3000);
+        setTimeout(() => {
+          this.state = GAME_STATE.MENU;
+          this.ui.showScreen('menu-screen');
+          this.ui.hideFightHud();
+        }, 3000);
+      }
+    });
+  }
+
+  async init() {
+    this.ui.setLoadingText('Loading assets...');
+
+    // Build stage
+    this.stage = new Stage(this.scene);
+
+    // Load fighter assets
+    this.sharedAssets = await Fighter.loadAssets((progress) => {
+      this.ui.setLoadingProgress(progress);
+    });
+
+    // Create fighters
+    this.createFighters();
+
+    this.ui.setLoadingProgress(1);
+    this.ui.setLoadingText('Ready!');
+
+    // Connect to server
+    try {
+      await this.network.connect();
+    } catch (e) {
+      console.warn('Could not connect to server. Only practice mode available.');
+    }
+
+    // Show menu
+    setTimeout(() => {
+      this.state = GAME_STATE.MENU;
+      this.ui.showScreen('menu-screen');
+    }, 500);
+
+    // Start game loop
+    this.gameLoop();
+  }
+
+  createFighters() {
+    const { baseModel, animClips, texture } = this.sharedAssets;
+    
+    this.fighters[0] = new Fighter(0, this.scene);
+    this.fighters[0].init(baseModel, animClips, texture);
+
+    this.fighters[1] = new Fighter(1, this.scene);
+    this.fighters[1].init(baseModel, animClips, texture);
+  }
+
+  prepareMatch() {
+    this.round = 1;
+    this.fighters[0].reset(-3);
+    this.fighters[1].reset(3);
+    this.fighters[0].wins = 0;
+    this.fighters[1].wins = 0;
+    this.roundTimer = GC.ROUND_TIME;
+    this.roundTimerAccum = 0;
+    this.ui.updateHealth(this.fighters[0].health, this.fighters[1].health, GC.MAX_HEALTH);
+    this.ui.updateWins(0, 0, GC.ROUNDS_TO_WIN);
+    this.ui.updateTimer(this.roundTimer);
+    this.fightCamera.reset();
+    this.state = GAME_STATE.COUNTDOWN;
+  }
+
+  findMatch() {
+    const name = this.ui.playerNameInput.value || 'Player';
+    if (!this.network.connected) {
+      this.ui.showAnnouncement('NOT CONNECTED', 'Server unavailable', 2000);
+      return;
+    }
+    this.network.joinMatch(name);
+    this.state = GAME_STATE.WAITING;
+  }
+
+  cancelSearch() {
+    this.network.leave();
+    this.state = GAME_STATE.MENU;
+    this.ui.showScreen('menu-screen');
+  }
+
+  startPractice() {
+    this.isPractice = true;
+    this.localPlayerIndex = 0;
+    const name = this.ui.playerNameInput.value || 'Player';
+    this.ui.setPlayerNames(name, 'CPU');
+    this.ui.hideAllScreens();
+    this.ui.showFightHud();
+    this.prepareMatch();
+    // Start countdown immediately for practice
+    this.startPracticeCountdown();
+  }
+
+  startPracticeCountdown() {
+    let count = 3;
+    const tick = () => {
+      if (count > 0) {
+        this.ui.showAnnouncement(`ROUND ${this.round}`, count.toString(), 900);
+        count--;
+        setTimeout(tick, 1000);
+      } else {
+        this.ui.showAnnouncement('FIGHT!', '', 1000);
+        this.state = GAME_STATE.FIGHTING;
+      }
+    };
+    this.state = GAME_STATE.COUNTDOWN;
+    tick();
+  }
+
+  // ============================================================
+  // GAME LOOP
+  // ============================================================
+
+  gameLoop() {
+    requestAnimationFrame(this.gameLoop);
+
+    const deltaTime = Math.min(this.clock.getDelta(), 0.05);
+    this.accumulator += deltaTime;
+
+    // Fixed timestep simulation
+    while (this.accumulator >= this.tickDuration) {
+      this.fixedUpdate();
+      this.accumulator -= this.tickDuration;
+      this.frame++;
+    }
+
+    // Variable timestep rendering
+    this.render(deltaTime);
+  }
+
+  fixedUpdate() {
+    // Always poll input to keep previousKeys in sync (prevents stale justPressed on round start)
+    const rawInput = this.input.update();
+
+    if (this.state !== GAME_STATE.FIGHTING && this.state !== GAME_STATE.PRACTICE) return;
+
+    const f1 = this.fighters[0];
+    const f2 = this.fighters[1];
+
+    // Determine inputs for each fighter
+    let p1Input, p2Input;
+
+    if (this.isPractice) {
+      // Practice mode: P1 uses keyboard, P2 is a dumb bot
+      p1Input = rawInput;
+      p2Input = this.getSimpleBotInput(f2, f1);
+    } else {
+      // Online mode - use last known opponent state, overwrite held keys
+      const opponentHeld = { ...this.lastOpponentInput };
+      // Clear just-pressed flags from last frame (they only fire once)
+      opponentHeld.upJust = false;
+      opponentHeld.downJust = false;
+      opponentHeld.leftJust = false;
+      opponentHeld.rightJust = false;
+      opponentHeld.lpJust = false;
+      opponentHeld.rpJust = false;
+      opponentHeld.lkJust = false;
+      opponentHeld.rkJust = false;
+      opponentHeld.dashLeft = false;
+      opponentHeld.dashRight = false;
+      opponentHeld.sideStepUp = false;
+      opponentHeld.sideStepDown = false;
+
+      // If new input arrived this frame, use it (includes just-pressed)
+      const opInput = this.pendingOpponentInput || opponentHeld;
+      if (this.pendingOpponentInput) {
+        this.lastOpponentInput = { ...this.pendingOpponentInput };
+        this.pendingOpponentInput = null;
+      }
+
+      if (this.localPlayerIndex === 0) {
+        p1Input = rawInput;
+        p2Input = opInput;
+        this.network.sendInput(this.frame, this.serializeInput(rawInput));
+      } else {
+        p1Input = opInput;
+        p2Input = rawInput;
+        this.network.sendInput(this.frame, this.serializeInput(rawInput));
+      }
+    }
+
+    // Process fighter inputs
+    f1.processInput(p1Input, f2.position);
+    f2.processInput(p2Input, f1.position);
+
+    // Combat resolution (snapshot active states to allow simultaneous trades)
+    const f1Active = f1.isAttackActive();
+    const f2Active = f2.isAttackActive();
+    if (f1Active) this.resolveCombat(f1, f2);
+    if (f2Active) this.resolveCombat(f2, f1);
+
+    // Push fighters apart (no overlap)
+    this.resolveFighterCollision(f1, f2);
+
+    // Physics
+    f1.updatePhysics();
+    f2.updatePhysics();
+
+    // Round timer
+    if (this.state === GAME_STATE.FIGHTING) {
+      this.roundTimerAccum += this.tickDuration;
+      if (this.roundTimerAccum >= 1.0) {
+        this.roundTimerAccum -= 1.0;
+        this.roundTimer--;
+        this.ui.updateTimer(this.roundTimer);
+
+        if (this.roundTimer <= 0) {
+          this.onTimeUp();
+        }
+      }
+    }
+
+    // Check for round end
+    if (this.state === GAME_STATE.FIGHTING) {
+      if (f1.health <= 0 || f2.health <= 0) {
+        this.onKO(f1.health <= 0 ? 1 : 0);
+      }
+    }
+
+    // Update HUD
+    this.ui.updateHealth(f1.health, f2.health, GC.MAX_HEALTH);
+
+    // Combo display
+    if (f2.comboCount >= 2 && f2.comboTimer > 0) {
+      this.ui.updateCombo(0, f2.comboCount, f2.comboDamage);
+    } else {
+      this.ui.hideCombo(0);
+    }
+    if (f1.comboCount >= 2 && f1.comboTimer > 0) {
+      this.ui.updateCombo(1, f1.comboCount, f1.comboDamage);
+    } else {
+      this.ui.hideCombo(1);
+    }
+
+    // Periodically sync state (P1 authoritative for online)
+    if (!this.isPractice && this.localPlayerIndex === 0 && this.frame % 6 === 0) {
+      this.network.sendGameState(this.frame, {
+        p1: f1.serializeState(),
+        p2: f2.serializeState(),
+        timer: this.roundTimer,
+        round: this.round,
+      });
+    }
+  }
+
+  resolveCombat(attacker, defender) {
+    if (!attacker.isAttackActive()) return;
+
+    // Check hitbox collision — project hitbox along attacker's facing angle
+    const hit = CombatSystem.checkHitbox(
+      attacker.position,
+      attacker.facingAngle,
+      attacker.currentMove,
+      defender.position
+    );
+
+    if (!hit) return;
+
+    // Resolve hit
+    const result = CombatSystem.resolveHit(attacker, defender, attacker.currentMove);
+
+    if (result.type === 'whiff') {
+      attacker.hasHitThisMove = true; // prevent further checks
+      return;
+    }
+
+    attacker.hasHitThisMove = true;
+
+    if (result.type === 'hit') {
+      defender.onHit(result, attacker.facingAngle);
+      this.ui.showHitEffect();
+      this.fightCamera.shake(0.15, 0.15);
+      this.spawnHitSpark(defender.position, attacker.facingAngle);
+    } else if (result.type === 'blocked') {
+      defender.onHit(result, attacker.facingAngle);
+      this.ui.showBlockEffect();
+      this.fightCamera.shake(0.05, 0.1);
+      this.spawnBlockSpark(defender.position);
+    }
+  }
+
+  resolveFighterCollision(f1, f2) {
+    const dx = f2.position.x - f1.position.x;
+    const dz = f2.position.z - f1.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const minDist = 1.0;
+
+    if (dist < minDist && dist > 0) {
+      const overlap = (minDist - dist) / 2;
+      const nx = dx / dist;
+      const nz = dz / dist;
+      f1.position.x -= nx * overlap;
+      f1.position.z -= nz * overlap;
+      f2.position.x += nx * overlap;
+      f2.position.z += nz * overlap;
+    }
+  }
+
+  // Simple practice bot AI
+  getSimpleBotInput(bot, opponent) {
+    const input = this.emptyInput();
+    const dx = opponent.position.x - bot.position.x;
+    const dz = opponent.position.z - bot.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    // Determine which raw key = "forward" for this bot's facing
+    const fwd  = bot.facing > 0 ? 'right' : 'left';
+    const back = bot.facing > 0 ? 'left' : 'right';
+
+    // Random behavior changes
+    const rand = Math.random();
+
+    // Walk towards opponent if far
+    if (dist > 3) {
+      input[fwd] = true;
+    }
+    // At mid range, sometimes approach, sometimes block
+    else if (dist > 1.5) {
+      if (rand < 0.3) {
+        input[fwd] = true;
+      } else if (rand < 0.5) {
+        // Block (hold back)
+        input[back] = true;
+      }
+      // Occasionally attack
+      if (rand > 0.95) {
+        input.lpJust = true;
+        input.lp = true;
+      }
+    }
+    // Close range - attack or block
+    else {
+      if (rand < 0.15) {
+        input.lpJust = true;
+        input.lp = true;
+      } else if (rand < 0.25) {
+        input.rpJust = true;
+        input.rp = true;
+      } else if (rand < 0.30) {
+        input.lkJust = true;
+        input.lk = true;
+      } else if (rand < 0.45) {
+        // Block
+        input[back] = true;
+      } else if (rand < 0.48) {
+        // Crouch
+        input.down = true;
+        if (Math.random() < 0.3) {
+          input.lkJust = true;
+          input.lk = true;
+        }
+      }
+    }
+
+    // React to being hit
+    if (bot.state === FIGHTER_STATE.HIT_STUN || bot.state === FIGHTER_STATE.BLOCK_STUN) {
+      // Try to block after recovering
+      input[back] = true;
+    }
+
+    return input;
+  }
+
+  serializeInput(input) {
+    return {
+      up: input.up, down: input.down, left: input.left, right: input.right,
+      lp: input.lp, rp: input.rp, lk: input.lk, rk: input.rk,
+      upJust: input.upJust, downJust: input.downJust,
+      leftJust: input.leftJust, rightJust: input.rightJust,
+      lpJust: input.lpJust, rpJust: input.rpJust,
+      lkJust: input.lkJust, rkJust: input.rkJust,
+      dashLeft: input.dashLeft, dashRight: input.dashRight,
+      sideStepUp: input.sideStepUp, sideStepDown: input.sideStepDown,
+    };
+  }
+
+  // ============================================================
+  // ROUND MANAGEMENT
+  // ============================================================
+
+  onKO(winnerIdx) {
+    this.state = GAME_STATE.ROUND_END;
+    const winner = this.fighters[winnerIdx];
+    const loser = this.fighters[winnerIdx === 0 ? 1 : 0];
+
+    winner.wins++;
+    winner.setVictory();
+    loser.setDefeat();
+
+    // Camera dramatic angle
+    this.fightCamera.setDramaticAngle(winner.position);
+    this.fightCamera.shake(0.3, 0.3);
+
+    this.ui.showAnnouncement('K.O.', '', 2000, 'ko');
+    this.ui.updateWins(this.fighters[0].wins, this.fighters[1].wins, GC.ROUNDS_TO_WIN);
+
+    // Check for match end
+    const matchOver = winner.wins >= GC.ROUNDS_TO_WIN;
+
+    if (!this.isPractice) {
+      this.network.sendRoundResult(
+        winnerIdx,
+        this.fighters[0].wins,
+        this.fighters[1].wins,
+        matchOver
+      );
+    }
+
+    if (matchOver) {
+      setTimeout(() => this.onMatchEnd(winnerIdx), 2500);
+    } else {
+      setTimeout(() => this.startNextRound(), 3000);
+    }
+  }
+
+  onTimeUp() {
+    this.state = GAME_STATE.ROUND_END;
+
+    // Player with more health wins
+    const f1 = this.fighters[0];
+    const f2 = this.fighters[1];
+    let winnerIdx;
+
+    if (f1.health > f2.health) {
+      winnerIdx = 0;
+    } else if (f2.health > f1.health) {
+      winnerIdx = 1;
+    } else {
+      // Draw - no wins awarded, replay the round
+      if (!this.isPractice) {
+        this.network.sendRoundResult(-1, this.fighters[0].wins, this.fighters[1].wins, false);
+      }
+      this.ui.showAnnouncement('DRAW', 'TIME UP', 2000);
+      setTimeout(() => this.startNextRound(), 3000);
+      return;
+    }
+
+    const winner = this.fighters[winnerIdx];
+    const loser = this.fighters[winnerIdx === 0 ? 1 : 0];
+    winner.wins++;
+    winner.setVictory();
+    loser.setDefeat();
+
+    this.ui.showAnnouncement('TIME UP', '', 2000);
+    this.ui.updateWins(this.fighters[0].wins, this.fighters[1].wins, GC.ROUNDS_TO_WIN);
+
+    const matchOver = winner.wins >= GC.ROUNDS_TO_WIN;
+
+    if (!this.isPractice) {
+      this.network.sendRoundResult(
+        winnerIdx,
+        this.fighters[0].wins,
+        this.fighters[1].wins,
+        matchOver
+      );
+    }
+
+    if (matchOver) {
+      setTimeout(() => this.onMatchEnd(winnerIdx), 2500);
+    } else {
+      setTimeout(() => this.startNextRound(), 3000);
+    }
+  }
+
+  onMatchEnd(winnerIdx) {
+    this.state = GAME_STATE.MATCH_END;
+    const winnerName = winnerIdx === 0 ? this.ui.p1Name.textContent : this.ui.p2Name.textContent;
+    this.ui.showAnnouncement(winnerName, 'WINS!', 0, 'victory');
+
+    setTimeout(() => {
+      this.ui.hideAnnouncement();
+      this.ui.hideFightHud();
+      this.ui.showScreen('menu-screen');
+      this.state = GAME_STATE.MENU;
+      this.isPractice = false;
+      this.fightCamera.reset();
+    }, 4000);
+  }
+
+  startNextRound() {
+    this.round++;
+    this.fighters[0].reset(-3);
+    this.fighters[1].reset(3);
+    this.roundTimer = GC.ROUND_TIME;
+    this.roundTimerAccum = 0;
+    this.ui.updateTimer(this.roundTimer);
+    this.ui.updateHealth(GC.MAX_HEALTH, GC.MAX_HEALTH, GC.MAX_HEALTH);
+    this.fightCamera.reset();
+
+    if (this.isPractice) {
+      this.startPracticeCountdown();
+    }
+    // Online mode: server sends countdown
+  }
+
+  // ============================================================
+  // 3D HIT EFFECTS
+  // ============================================================
+
+  spawnHitSpark(position, attackerFacingAngle) {
+    const cosA = Math.cos(attackerFacingAngle);
+    const sinA = Math.sin(attackerFacingAngle);
+    const count = 12;
+    for (let i = 0; i < count; i++) {
+      const geo = new THREE.SphereGeometry(0.03, 4, 4);
+      const mat = new THREE.MeshBasicMaterial({
+        color: Math.random() > 0.5 ? 0xff6600 : 0xffcc00,
+        transparent: true,
+      });
+      const spark = new THREE.Mesh(geo, mat);
+      spark.position.set(
+        position.x + cosA * 0.5,
+        position.y + 1.2 + (Math.random() - 0.5) * 0.5,
+        position.z + sinA * 0.5 + (Math.random() - 0.5) * 0.3
+      );
+      spark.userData = {
+        velocity: new THREE.Vector3(
+          (Math.random() - 0.3) * 0.15 * cosA,
+          Math.random() * 0.12,
+          (Math.random() - 0.3) * 0.15 * sinA
+        ),
+        life: 1.0,
+        decay: 0.04 + Math.random() * 0.03,
+      };
+      this.scene.add(spark);
+      this.hitParticles.push(spark);
+    }
+  }
+
+  spawnBlockSpark(position) {
+    const count = 6;
+    for (let i = 0; i < count; i++) {
+      const geo = new THREE.SphereGeometry(0.02, 4, 4);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x4488ff,
+        transparent: true,
+      });
+      const spark = new THREE.Mesh(geo, mat);
+      spark.position.set(
+        position.x,
+        position.y + 1.2 + (Math.random() - 0.5) * 0.3,
+        position.z + (Math.random() - 0.5) * 0.2
+      );
+      spark.userData = {
+        velocity: new THREE.Vector3(
+          (Math.random() - 0.5) * 0.1,
+          Math.random() * 0.08,
+          (Math.random() - 0.5) * 0.08
+        ),
+        life: 1.0,
+        decay: 0.06,
+      };
+      this.scene.add(spark);
+      this.hitParticles.push(spark);
+    }
+  }
+
+  updateHitParticles(deltaTime) {
+    for (let i = this.hitParticles.length - 1; i >= 0; i--) {
+      const p = this.hitParticles[i];
+      const d = p.userData;
+      d.life -= d.decay;
+      d.velocity.y -= 0.005; // gravity
+      p.position.add(d.velocity);
+      p.material.opacity = d.life;
+      p.scale.setScalar(d.life);
+
+      if (d.life <= 0) {
+        this.scene.remove(p);
+        p.geometry.dispose();
+        p.material.dispose();
+        this.hitParticles.splice(i, 1);
+      }
+    }
+  }
+
+  // ============================================================
+  // RENDER
+  // ============================================================
+
+  render(deltaTime) {
+    const f1 = this.fighters[0];
+    const f2 = this.fighters[1];
+
+    // Update fighter visuals
+    if (f1) f1.updateVisuals(deltaTime);
+    if (f2) f2.updateVisuals(deltaTime);
+
+    // Update camera
+    if (f1 && f2) {
+      this.fightCamera.update(f1.position, f2.position, deltaTime);
+    }
+
+    // Update stage
+    if (this.stage) this.stage.update(deltaTime);
+
+    // Update hit particles
+    this.updateHitParticles(deltaTime);
+
+    // Render
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  onResize() {
+    this.camera.aspect = window.innerWidth / window.innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+}

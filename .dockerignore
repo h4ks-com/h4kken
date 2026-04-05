@@ -1,0 +1,11 @@
+node_modules
+npm-debug.log
+AnimPack01/
+AnimPack01.zip
+.git
+.gitignore
+.github
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore
