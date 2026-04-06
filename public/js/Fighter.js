@@ -1080,8 +1080,22 @@ export class Fighter {
   }
 
   handleKnockdownState() {
+    // Apply gravity when airborne (e.g. after throw launches defender upward)
+    if (this.position.y > GC.GROUND_Y || this.velocity.y > 0) {
+      this.velocity.y += GC.JUGGLE_GRAVITY;
+      if (this.position.y <= GC.GROUND_Y && this.velocity.y <= 0) {
+        this.position.y = GC.GROUND_Y;
+        this.velocity.y = 0;
+        this.velocity.x = 0;
+        this.isGrounded = true;
+      }
+    }
+
     this.knockdownTimer--;
     if (this.knockdownTimer <= 0) {
+      this.position.y = GC.GROUND_Y;
+      this.velocity.y = 0;
+      this.isGrounded = true;
       this.state = FIGHTER_STATE.GETUP;
       this.getupTimer = GC.GETUP_FRAMES;
       this.playAnimation('landing', 0.2);
