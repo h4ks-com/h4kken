@@ -141,6 +141,7 @@ export class Game {
       if (msg.count === 3) {
         // First countdown tick — ensure fighters are reset for the new round
         this.startNextRound();
+        this.playBGM();
       }
       if (msg.count > 0) {
         this.ui.showAnnouncement(`ROUND ${this.round}`, msg.count.toString(), 900);
@@ -152,7 +153,6 @@ export class Game {
       this.ui.showAnnouncement('FIGHT!', '', 1000);
       this.state = GAME_STATE.FIGHTING;
       this._roundResetting = false;
-      this.playBGM();
     });
 
     this.network.on('opponentInput', (msg) => {
@@ -310,6 +310,7 @@ export class Game {
 
   startPracticeCountdown() {
     let count = 3;
+    this.playBGM();
     const tick = () => {
       if (count > 0) {
         this.ui.showAnnouncement(`ROUND ${this.round}`, count.toString(), 900);
@@ -319,7 +320,6 @@ export class Game {
         this.ui.showAnnouncement('FIGHT!', '', 1000);
         this.state = GAME_STATE.FIGHTING;
         this._roundResetting = false;
-        this.playBGM();
       }
     };
     this.state = GAME_STATE.COUNTDOWN;
@@ -601,7 +601,6 @@ export class Game {
 
   onKO(winnerIdx) {
     this.state = GAME_STATE.ROUND_END;
-    this.stopBGM();
     const winner = this.fighters[winnerIdx];
     const loser = this.fighters[winnerIdx === 0 ? 1 : 0];
 
@@ -638,7 +637,6 @@ export class Game {
 
   onTimeUp() {
     this.state = GAME_STATE.ROUND_END;
-    this.stopBGM();
 
     // Player with more health wins
     const f1 = this.fighters[0];
