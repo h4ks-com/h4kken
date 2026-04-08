@@ -1,14 +1,14 @@
 // ============================================================
-// H4KKEN - Fighting Game Camera
+// H4KKEN - Fighting Game Camera (Babylon.js)
 // ============================================================
 
-import * as THREE from 'three';
+import { type FreeCamera, Scalar, Vector3 } from '@babylonjs/core';
 
 export class FightCamera {
-  camera: THREE.Camera;
-  targetPosition: THREE.Vector3;
-  targetLookAt: THREE.Vector3;
-  currentLookAt: THREE.Vector3;
+  camera: FreeCamera;
+  targetPosition: Vector3;
+  targetLookAt: Vector3;
+  currentLookAt: Vector3;
   smoothSpeed: number;
   minDistance: number;
   maxDistance: number;
@@ -19,11 +19,12 @@ export class FightCamera {
   shakeTimer: number;
   orbitAngle: number;
 
-  constructor(camera: THREE.Camera) {
+  constructor(camera: FreeCamera) {
     this.camera = camera;
-    this.targetPosition = new THREE.Vector3(0, 3, 10);
-    this.targetLookAt = new THREE.Vector3(0, 1.2, 0);
-    this.currentLookAt = new THREE.Vector3(0, 1.2, 0);
+    // Babylon left-handed: Z away from camera, so initial position has negative Z
+    this.targetPosition = new Vector3(0, 3, -10);
+    this.targetLookAt = new Vector3(0, 1.2, 0);
+    this.currentLookAt = new Vector3(0, 1.2, 0);
     this.smoothSpeed = 0.06;
     this.minDistance = 5;
     this.maxDistance = 11;
@@ -32,18 +33,14 @@ export class FightCamera {
     this.shakeIntensity = 0;
     this.shakeDuration = 0;
     this.shakeTimer = 0;
-    this.orbitAngle = Math.PI / 2;
+    // Orbit angle starts at -PI/2 so camera is behind fighters (negative Z side)
+    this.orbitAngle = -Math.PI / 2;
 
-    this.camera.position.copy(this.targetPosition);
-    (this.camera as THREE.PerspectiveCamera).lookAt(this.targetLookAt);
+    this.camera.position.copyFrom(this.targetPosition);
+    this.camera.setTarget(this.targetLookAt);
   }
 
-  update(
-    fighter1Pos: THREE.Vector3,
-    fighter2Pos: THREE.Vector3,
-    deltaTime: number,
-    localPlayerIndex = 0,
-  ) {
+  update(fighter1Pos: Vector3, fighter2Pos: Vector3, deltaTime: number, localPlayerIndex = 0) {
     const midX = (fighter1Pos.x + fighter2Pos.x) / 2;
     const midY = Math.max((fighter1Pos.y + fighter2Pos.y) / 2, 0);
     const midZ = (fighter1Pos.z + fighter2Pos.z) / 2;
@@ -64,8 +61,8 @@ export class FightCamera {
       this.orbitAngle += angleDiff * 0.06;
     }
 
-    const zoomFactor = THREE.MathUtils.clamp(fighterDist / 8, 0, 1);
-    const depth = THREE.MathUtils.lerp(this.minDistance, this.maxDistance, zoomFactor);
+    const zoomFactor = Scalar.Clamp(fighterDist / 8, 0, 1);
+    const depth = Scalar.Lerp(this.minDistance, this.maxDistance, zoomFactor);
     const height = this.heightOffset + zoomFactor * 1.5;
 
     this.targetPosition.set(
@@ -76,8 +73,13 @@ export class FightCamera {
 
     this.targetLookAt.set(midX, midY + this.lookAtHeightOffset, midZ);
 
-    this.camera.position.lerp(this.targetPosition, this.smoothSpeed);
-    this.currentLookAt.lerp(this.targetLookAt, this.smoothSpeed);
+    Vector3.LerpToRef(
+      this.camera.position,
+      this.targetPosition,
+      this.smoothSpeed,
+      this.camera.position,
+    );
+    Vector3.LerpToRef(this.currentLookAt, this.targetLookAt, this.smoothSpeed, this.currentLookAt);
 
     if (this.shakeTimer > 0) {
       this.shakeTimer -= deltaTime;
@@ -86,7 +88,7 @@ export class FightCamera {
       this.camera.position.y += (Math.random() - 0.5) * shakePower * 0.5;
     }
 
-    (this.camera as THREE.PerspectiveCamera).lookAt(this.currentLookAt);
+    this.camera.setTarget(this.currentLookAt);
   }
 
   shake(intensity: number, duration: number) {
@@ -95,7 +97,7 @@ export class FightCamera {
     this.shakeTimer = duration;
   }
 
-  setDramaticAngle(focusPos: THREE.Vector3) {
+  setDramaticAngle(focusPos: Vector3) {
     const cosA = Math.cos(this.orbitAngle);
     const sinA = Math.sin(this.orbitAngle);
     this.targetPosition.set(focusPos.x + cosA * 4, focusPos.y + 2, focusPos.z + sinA * 4);

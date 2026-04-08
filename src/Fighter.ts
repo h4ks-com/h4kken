@@ -1,10 +1,23 @@
 // ============================================================
 // H4KKEN - Fighter (Model, Animation, State Machine, Physics)
+// Babylon.js — FBX assets via babylonjs-fbx-loader
 // ============================================================
 
-import * as THREE from 'three';
-import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
-import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import {
+  type AbstractMesh,
+  type AnimationGroup,
+  type Bone,
+  Color3,
+  PBRMaterial,
+  type Scene,
+  SceneLoader,
+  type Skeleton,
+  StandardMaterial,
+  Texture,
+  type TransformNode,
+  Vector3,
+} from '@babylonjs/core';
+import { FBXLoader } from 'babylonjs-fbx-loader';
 import {
   CombatSystem,
   FIGHTER_STATE,
@@ -17,10 +30,14 @@ import {
 import type { InputState } from './Input';
 import type { FighterStateSync } from './Network';
 
+// Register the FBX plugin once at module load
+SceneLoader.RegisterPlugin(new FBXLoader());
+
 export interface SharedAssets {
-  baseModel: THREE.Object3D;
-  animClips: Record<string, THREE.AnimationClip>;
-  texture: THREE.Texture;
+  baseRoot: TransformNode;
+  baseSkeleton: Skeleton | null;
+  animGroups: Record<string, AnimationGroup>;
+  texture: Texture;
 }
 
 const GC = GAME_CONSTANTS;
@@ -50,19 +67,32 @@ const ANIM_FILES: Record<string, string> = {
   victory: 'Arnold_Victory.fbx',
 };
 
+const LOOP_ANIMS = new Set([
+  'idle',
+  'combatIdle',
+  'crouchIdle',
+  'crouchWalk',
+  'walk',
+  'walkBack',
+  'walkLeft',
+  'walkRight',
+  'run',
+  'runBack',
+  'sprint',
+  'falling',
+]);
+
 export class Fighter {
   playerIndex: number;
-  scene: THREE.Scene;
-  model: THREE.Object3D | null;
-  mixer: THREE.AnimationMixer | null;
-  animations: Record<string, THREE.AnimationClip>;
-  actions: Record<string, THREE.AnimationAction>;
-  currentAction: THREE.AnimationAction | null;
-  skeleton: THREE.Skeleton | null;
+  scene: Scene;
+  rootNode: TransformNode | null;
+  meshes: AbstractMesh[];
+  animGroups: Record<string, AnimationGroup>;
+  currentAnimGroup: AnimationGroup | null;
   state: string;
   previousState: string;
-  position: THREE.Vector3;
-  velocity: THREE.Vector3;
+  position: Vector3;
+  velocity: Vector3;
   facing: number;
   facingAngle: number;
   health: number;
@@ -87,27 +117,22 @@ export class Fighter {
   runFrames: number;
   landingTimer: number;
   hitFlash: number;
-  _cachedMaterials: THREE.Material[] | null;
-  rootBone: THREE.Bone | null;
-  rootBoneBindX: number;
-  rootBoneBindZ: number;
 
-  constructor(playerIndex: number, scene: THREE.Scene) {
+  constructor(playerIndex: number, scene: Scene) {
     this.playerIndex = playerIndex;
     this.scene = scene;
 
-    this.model = null;
-    this.mixer = null;
-    this.animations = {};
-    this.actions = {};
-    this.currentAction = null;
-    this.skeleton = null;
+    this.rootNode = null;
+    this.meshes = [];
+    this.animGroups = {};
+    this.currentAnimGroup = null;
 
     this.state = FIGHTER_STATE.IDLE;
     this.previousState = FIGHTER_STATE.IDLE;
-    this.position = new THREE.Vector3(playerIndex === 0 ? -3 : 3, 0, 0);
-    this.velocity = new THREE.Vector3(0, 0, 0);
+    this.position = new Vector3(playerIndex === 0 ? -3 : 3, 0, 0);
+    this.velocity = new Vector3(0, 0, 0);
     this.facing = 1;
+    // Babylon left-handed: fighter 0 faces +X direction (angle 0), fighter 1 faces -X (angle PI)
     this.facingAngle = playerIndex === 0 ? 0 : Math.PI;
     this.health = GC.MAX_HEALTH;
     this.maxHealth = GC.MAX_HEALTH;
@@ -137,650 +162,209 @@ export class Fighter {
     this.landingTimer = 0;
 
     this.hitFlash = 0;
-    this._cachedMaterials = null;
-
-    this.rootBone = null;
-    this.rootBoneBindX = 0;
-    this.rootBoneBindZ = 0;
   }
 
-  static retargetClip(clip: THREE.AnimationClip, validNodeNames: Set<string>) {
-    for (const track of clip.tracks) {
-      const propMatch = track.name.match(
-        /\.(position|quaternion|scale|morphTargetInfluences|visible)(\[.*\])?$/,
-      );
-      if (!propMatch) continue;
+  // FBX loader prefixes every bone as "<meshName>-<boneName>".
+  // Strip that prefix so we can match bones across different FBX files.
+  private static _boneSuffix(name: string): string {
+    const idx = name.indexOf('-');
+    return idx >= 0 ? name.substring(idx + 1) : name;
+  }
 
-      const propPart = propMatch[0];
-      const nodePart = track.name.substring(0, track.name.length - propPart.length);
-
-      if (validNodeNames.has(nodePart)) continue;
-
-      const parts = nodePart.split('/');
-      let matched = false;
-      for (let j = 1; j < parts.length; j++) {
-        const candidate = parts.slice(j).join('/');
-        if (validNodeNames.has(candidate)) {
-          track.name = candidate + propPart;
-          matched = true;
-          break;
-        }
-      }
-
-      if (!matched && parts.length > 1) {
-        const last = parts[parts.length - 1];
-        if (last !== undefined && validNodeNames.has(last)) {
-          track.name = last + propPart;
-        }
+  private static _applyTexture(meshes: AbstractMesh[], texture: Texture) {
+    for (const mesh of meshes) {
+      mesh.receiveShadows = true;
+      if (!mesh.material) continue;
+      const mat = mesh.material;
+      if (mat instanceof PBRMaterial) {
+        mat.albedoTexture = texture;
+      } else if (mat instanceof StandardMaterial) {
+        mat.diffuseTexture = texture;
       }
     }
-    return clip;
   }
 
-  private static quatVelocity(vals: Float32Array, i: number, dt: number): number {
-    const stride = 4;
-    let diff = 0;
-    for (let c = 0; c < stride; c++) {
-      const a = vals[i * stride + c];
-      const b = vals[(i - 1) * stride + c];
-      if (a === undefined || b === undefined) continue;
-      const d = a - b;
-      diff += d * d;
-    }
-    return Math.sqrt(diff) / dt;
-  }
-
-  private static trackMotionRange(
-    track: THREE.KeyframeTrack,
-    threshold: number,
-    firstMotion: number,
-    lastMotion: number,
-  ): { firstMotion: number; lastMotion: number } {
-    const times = track.times;
-    const vals = track.values;
-    for (let i = 1; i < times.length; i++) {
-      const curr = times[i];
-      const prev = times[i - 1];
-      if (curr === undefined || prev === undefined) continue;
-      const dt = curr - prev;
-      if (dt <= 0) continue;
-      const vel = Fighter.quatVelocity(vals, i, dt);
-      if (vel > threshold) {
-        if (prev < firstMotion) firstMotion = prev;
-        if (curr > lastMotion) lastMotion = curr;
+  private static _retargetGroup(
+    srcGroup: AnimationGroup,
+    baseSkeleton: { bones: { name: string }[] },
+  ) {
+    for (const ta of srcGroup.targetedAnimations) {
+      const target = ta.target;
+      if (target && typeof target === 'object' && 'name' in target) {
+        const boneName = (target as { name: string }).name;
+        const boneSuffix = Fighter._boneSuffix(boneName);
+        const baseBone = baseSkeleton.bones.find((b) => Fighter._boneSuffix(b.name) === boneSuffix);
+        if (baseBone) ta.target = baseBone;
       }
     }
-    return { firstMotion, lastMotion };
   }
 
-  private static findMotionRange(
-    clip: THREE.AnimationClip,
-    threshold: number,
-  ): { firstMotion: number; lastMotion: number } {
-    let firstMotion = clip.duration;
-    let lastMotion = 0;
-
-    for (const track of clip.tracks) {
-      if (!track.name.includes('.quaternion')) continue;
-      if (track.name.startsWith('root.') || track.name.startsWith('pelvis.')) continue;
-      ({ firstMotion, lastMotion } = Fighter.trackMotionRange(
-        track,
-        threshold,
-        firstMotion,
-        lastMotion,
-      ));
-    }
-
-    return { firstMotion, lastMotion };
+  private static _disposeImportResult(r: {
+    meshes: AbstractMesh[];
+    skeletons: { dispose(): void }[];
+    transformNodes: TransformNode[];
+  }) {
+    for (const m of r.meshes) m.dispose();
+    for (const s of r.skeletons) s.dispose();
+    for (const n of r.transformNodes) n.dispose();
   }
 
-  private static buildTrimmedTracks(
-    clip: THREE.AnimationClip,
-    trimStart: number,
-    trimEnd: number,
-  ): THREE.KeyframeTrack[] {
-    const newTracks: THREE.KeyframeTrack[] = [];
-
-    for (const track of clip.tracks) {
-      const times = track.times;
-      const vals = track.values;
-      const valSize = vals.length / times.length;
-
-      let iStart = 0;
-      while (iStart < times.length - 1) {
-        const nextTime = times[iStart + 1];
-        if (nextTime !== undefined && nextTime < trimStart) {
-          iStart++;
-        } else {
-          break;
-        }
-      }
-
-      let iEnd = times.length - 1;
-      while (iEnd > 0) {
-        const prevTime = times[iEnd - 1];
-        if (prevTime !== undefined && prevTime > trimEnd) {
-          iEnd--;
-        } else {
-          break;
-        }
-      }
-
-      const count = iEnd - iStart + 1;
-      if (count < 2) {
-        const newTimes = new Float32Array([0, trimEnd - trimStart]);
-        const newVals = new Float32Array(valSize * 2);
-        for (let c = 0; c < valSize; c++) {
-          const v = vals[iStart * valSize + c];
-          if (v !== undefined) {
-            newVals[c] = v;
-            newVals[valSize + c] = v;
-          }
-        }
-        newTracks.push(
-          new THREE.KeyframeTrack(track.name, Array.from(newTimes), Array.from(newVals)),
-        );
-        continue;
-      }
-
-      const newTimes = new Float32Array(count);
-      const newVals = new Float32Array(count * valSize);
-      for (let i = 0; i < count; i++) {
-        const t = times[iStart + i];
-        newTimes[i] = t !== undefined ? t - trimStart : 0;
-        for (let c = 0; c < valSize; c++) {
-          const v = vals[(iStart + i) * valSize + c];
-          if (v !== undefined) newVals[i * valSize + c] = v;
-        }
-      }
-      if ((newTimes[0] ?? 0) > 0) newTimes[0] = 0;
-
-      newTracks.push(
-        new THREE.KeyframeTrack(track.name, Array.from(newTimes), Array.from(newVals)),
-      );
-    }
-
-    return newTracks;
-  }
-
-  static trimClip(clip: THREE.AnimationClip, padBefore = 0.1) {
-    const threshold = 0.005;
-    const { firstMotion, lastMotion } = Fighter.findMotionRange(clip, threshold);
-
-    if (firstMotion >= lastMotion || firstMotion < 0.15) return clip;
-
-    const trimStart = Math.max(0, firstMotion - padBefore);
-    const trimEnd = clip.duration;
-    const newTracks = Fighter.buildTrimmedTracks(clip, trimStart, trimEnd);
-
-    return new THREE.AnimationClip(clip.name, trimEnd - trimStart, newTracks);
-  }
-
-  static async loadAssets(onProgress?: (p: number) => void): Promise<SharedAssets> {
-    const loader = new FBXLoader();
-    const basePath = 'assets/models/';
-    const texturePath = 'assets/textures/BaseColor.png';
-
+  static async loadAssets(scene: Scene, onProgress?: (p: number) => void): Promise<SharedAssets> {
+    const basePath = '/assets/models/';
+    const texturePath = '/assets/textures/BaseColor.png';
     const totalFiles = Object.keys(ANIM_FILES).length + 1;
     let loaded = 0;
 
     const report = () => {
       loaded++;
-      if (onProgress) onProgress(loaded / totalFiles);
+      onProgress?.(loaded / totalFiles);
     };
 
-    const baseModel = await loader.loadAsync(`${basePath}Arnold.fbx`);
+    const baseResult = await SceneLoader.ImportMeshAsync(null, basePath, 'Arnold.fbx', scene);
     report();
 
-    const validNodeNames = new Set<string>();
-    baseModel.traverse((node) => {
-      if (node.name) validNodeNames.add(node.name);
-    });
-    console.log('[H4KKEN] Base model nodes:', [...validNodeNames]);
+    const baseRoot = baseResult.transformNodes[0] ?? baseResult.meshes[0];
+    if (!baseRoot) throw new Error('Arnold.fbx: no root node found');
 
-    const textureLoader = new THREE.TextureLoader();
-    const texture = await textureLoader.loadAsync(texturePath);
-    texture.colorSpace = THREE.SRGBColorSpace;
+    // FBX exports in centimeters; Babylon works in meters — scale down by 0.01
+    baseRoot.scaling.setAll(0.01);
 
-    baseModel.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-        const mesh = child as THREE.Mesh;
-        if (mesh.material) {
-          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-          materials.forEach((mat: THREE.Material) => {
-            (mat as THREE.MeshStandardMaterial).map = texture;
-            mat.needsUpdate = true;
-          });
-        }
-      }
-    });
+    console.log('[H4KKEN] Base model loaded (FBX)');
 
-    const animClips: Record<string, THREE.AnimationClip> = {};
+    const texture = new Texture(texturePath, scene);
+    texture.gammaSpace = true;
+    Fighter._applyTexture(baseResult.meshes, texture);
+
+    for (const m of baseResult.meshes) m.setEnabled(false);
+    for (const n of baseResult.transformNodes) n.setEnabled(false);
+    if (baseResult.skeletons[0]) baseResult.skeletons[0].returnToRest();
+
+    const baseSkeleton = baseResult.skeletons[0];
+    const animGroups: Record<string, AnimationGroup> = {};
     const animEntries = Object.entries(ANIM_FILES);
 
     for (let i = 0; i < animEntries.length; i += 4) {
       const batch = animEntries.slice(i, i + 4);
       const results = await Promise.all(
         batch.map(([name, file]) =>
-          loader.loadAsync(basePath + file).then((fbx) => {
+          SceneLoader.ImportMeshAsync(null, basePath, file, scene).then((r) => {
             report();
-            return { name, fbx };
+            return { name, r };
           }),
         ),
       );
-      results.forEach(({ name, fbx }) => {
-        if (fbx.animations && fbx.animations.length > 0) {
-          let clip = fbx.animations[0];
-          if (!clip) return;
-          clip.name = name;
 
-          Fighter.retargetClip(clip, validNodeNames);
-
-          const origDur = clip.duration;
-          clip = Fighter.trimClip(clip);
-
-          console.log(
-            `[H4KKEN] Anim "${name}": ${origDur.toFixed(2)}s → trimmed ${clip.duration.toFixed(2)}s, ${clip.tracks.length} tracks`,
-          );
-          animClips[name] = clip;
-        } else {
-          console.warn(`[H4KKEN] No animation data in ${name}`);
+      for (const { name, r } of results) {
+        const srcGroup = r.animationGroups[0];
+        if (!srcGroup) {
+          console.warn(`[H4KKEN] No animation group in ${name}`);
+          Fighter._disposeImportResult(r);
+          continue;
         }
-      });
+
+        if (baseSkeleton) Fighter._retargetGroup(srcGroup, baseSkeleton);
+
+        srcGroup.name = name;
+        animGroups[name] = srcGroup;
+        console.log(`[H4KKEN] Anim "${name}": ${srcGroup.to.toFixed(2)}s`);
+
+        Fighter._disposeImportResult(r);
+      }
     }
 
-    Fighter.createProceduralKicks(baseModel, animClips);
-
-    return { baseModel, animClips, texture };
+    return {
+      baseRoot: baseRoot as TransformNode,
+      baseSkeleton: baseResult.skeletons[0] ?? null,
+      animGroups,
+      texture,
+    };
   }
 
-  static createProceduralKicks(
-    _baseModel: THREE.Object3D,
-    animClips: Record<string, THREE.AnimationClip>,
-  ) {
-    const idleClip = animClips.combatIdle;
-    if (!idleClip) return;
-    const idlePose: Record<string, THREE.Quaternion> = {};
-    const idlePos: Record<string, THREE.Vector3> = {};
+  init(assets: SharedAssets) {
+    const { baseRoot, baseSkeleton, animGroups, texture } = assets;
 
-    for (const track of idleClip.tracks) {
-      const dotIdx = track.name.lastIndexOf('.');
-      const boneName = track.name.substring(0, dotIdx);
-      const prop = track.name.substring(dotIdx + 1);
+    // Clone root node — recursively clones child meshes too
+    const cloned = baseRoot.clone(`fighter${this.playerIndex}`, null);
+    if (!cloned) throw new Error(`Failed to clone model for fighter ${this.playerIndex}`);
+    this.rootNode = cloned as TransformNode;
 
-      if (prop === 'quaternion' && track.values.length >= 4) {
-        idlePose[boneName] = new THREE.Quaternion(
-          track.values[0],
-          track.values[1],
-          track.values[2],
-          track.values[3],
-        );
-      } else if (prop === 'position' && track.values.length >= 3) {
-        idlePos[boneName] = new THREE.Vector3(track.values[0], track.values[1], track.values[2]);
-      }
+    // Clone the skeleton so each fighter has independent bone state.
+    // Without this the two fighters share one skeleton and animate each other.
+    const clonedSkeleton = baseSkeleton
+      ? baseSkeleton.clone(`skeleton_f${this.playerIndex}`, `skel_${this.playerIndex}`)
+      : null;
+
+    // Collect cloned meshes and reassign to the cloned skeleton
+    this.meshes = [];
+    for (const m of this.rootNode.getChildMeshes(false)) {
+      this.meshes.push(m);
+      m.setEnabled(true);
+      m.receiveShadows = true;
+      if (clonedSkeleton && m.skeleton) m.skeleton = clonedSkeleton;
     }
+    this.rootNode.setEnabled(true);
 
-    const THIGH_R_FWD = new THREE.Vector3(0.017, -0.322, 0.94).normalize();
-    const THIGH_L_FWD = new THREE.Vector3(0.039, 0.583, -0.808).normalize();
-    const CALF_R_EXT = new THREE.Vector3(-0.576, -0.287, 0.749).normalize();
-    const CALF_L_EXT = new THREE.Vector3(0.576, -0.287, 0.749).normalize();
-
-    function offsetQ(boneName: string, axis: THREE.Vector3, angle: number) {
-      const base = idlePose[boneName];
-      if (!base) return new THREE.Quaternion();
-      const off = new THREE.Quaternion().setFromAxisAngle(axis, angle);
-      return base.clone().multiply(off);
-    }
-
-    function eulerOffsetQ(boneName: string, rx: number, ry: number, rz: number) {
-      const base = idlePose[boneName];
-      if (!base) return new THREE.Quaternion();
-      const off = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx || 0, ry || 0, rz || 0));
-      return base.clone().multiply(off);
-    }
-
-    interface BoneKeyframe {
-      t: number;
-      q?: THREE.Quaternion;
-    }
-    interface PelvisKeyframe {
-      t: number;
-      dx?: number;
-      dy?: number;
-      dz?: number;
-    }
-    interface KickBoneAnims {
-      [bone: string]: BoneKeyframe[] | PelvisKeyframe[] | undefined;
-      _pelvisShift?: PelvisKeyframe[];
-    }
-
-    function buildKickClip(name: string, duration: number, boneAnims: KickBoneAnims) {
-      const tracks: THREE.KeyframeTrack[] = [];
-      const animBones = new Set(Object.keys(boneAnims).filter((k) => !k.startsWith('_')));
-
-      for (const [boneName, q] of Object.entries(idlePose)) {
-        if (animBones.has(boneName)) {
-          const kfs = boneAnims[boneName] as BoneKeyframe[] | undefined;
-          if (!kfs) continue;
-          const times = new Float32Array(kfs.map((kf) => kf.t));
-          const values = new Float32Array(kfs.length * 4);
-          for (let i = 0; i < kfs.length; i++) {
-            const kf = kfs[i];
-            const qv = kf?.q;
-            if (!qv) continue;
-            values[i * 4] = qv.x;
-            values[i * 4 + 1] = qv.y;
-            values[i * 4 + 2] = qv.z;
-            values[i * 4 + 3] = qv.w;
-          }
-          tracks.push(
-            new THREE.QuaternionKeyframeTrack(
-              `${boneName}.quaternion`,
-              Array.from(times),
-              Array.from(values),
-            ),
-          );
-        } else {
-          tracks.push(
-            new THREE.QuaternionKeyframeTrack(
-              `${boneName}.quaternion`,
-              [0, duration],
-              [q.x, q.y, q.z, q.w, q.x, q.y, q.z, q.w],
-            ),
-          );
-        }
-      }
-
-      for (const [boneName, pos] of Object.entries(idlePos)) {
-        if (boneAnims._pelvisShift && boneName === 'pelvis') {
-          const pk = boneAnims._pelvisShift;
-          const times = new Float32Array(pk.map((kf) => kf.t));
-          const values = new Float32Array(pk.length * 3);
-          for (let i = 0; i < pk.length; i++) {
-            const pkf = pk[i];
-            values[i * 3] = pos.x + (pkf?.dx || 0);
-            values[i * 3 + 1] = pos.y + (pkf?.dy || 0);
-            values[i * 3 + 2] = pos.z + (pkf?.dz || 0);
-          }
-          tracks.push(
-            new THREE.VectorKeyframeTrack('pelvis.position', Array.from(times), Array.from(values)),
-          );
-        } else {
-          tracks.push(
-            new THREE.VectorKeyframeTrack(
-              `${boneName}.position`,
-              [0, duration],
-              [pos.x, pos.y, pos.z, pos.x, pos.y, pos.z],
-            ),
-          );
-        }
-      }
-
-      const clip = new THREE.AnimationClip(name, duration, tracks);
-      console.log(
-        `[H4KKEN] Procedural "${name}": ${clip.duration.toFixed(2)}s, ${clip.tracks.length} tracks`,
-      );
-      return clip;
-    }
-
-    const idle = (bone: string) =>
-      idlePose[bone] ? idlePose[bone].clone() : new THREE.Quaternion();
-    const aa = (bone: string, axis: THREE.Vector3, angle: number) => offsetQ(bone, axis, angle);
-    const eu = (bone: string, rx: number, ry: number, rz: number) => eulerOffsetQ(bone, rx, ry, rz);
-
-    animClips.kickRight = buildKickClip('kickRight', 0.5, {
-      thigh_r: [
-        { t: 0.0, q: idle('thigh_r') },
-        { t: 0.08, q: aa('thigh_r', THIGH_R_FWD, -0.25) },
-        { t: 0.2, q: aa('thigh_r', THIGH_R_FWD, 1.35) },
-        { t: 0.35, q: aa('thigh_r', THIGH_R_FWD, 1.15) },
-        { t: 0.5, q: idle('thigh_r') },
-      ],
-      calf_r: [
-        { t: 0.0, q: idle('calf_r') },
-        { t: 0.08, q: aa('calf_r', CALF_R_EXT, -0.5) },
-        { t: 0.2, q: aa('calf_r', CALF_R_EXT, 0.65) },
-        { t: 0.35, q: aa('calf_r', CALF_R_EXT, 0.55) },
-        { t: 0.5, q: idle('calf_r') },
-      ],
-      foot_r: [
-        { t: 0.0, q: idle('foot_r') },
-        { t: 0.2, q: eu('foot_r', -0.3, 0, 0) },
-        { t: 0.5, q: idle('foot_r') },
-      ],
-      spine_01: [
-        { t: 0.0, q: idle('spine_01') },
-        { t: 0.15, q: eu('spine_01', 0, 0, 0.15) },
-        { t: 0.5, q: idle('spine_01') },
-      ],
-      thigh_l: [
-        { t: 0.0, q: idle('thigh_l') },
-        { t: 0.15, q: aa('thigh_l', THIGH_L_FWD, -0.1) },
-        { t: 0.5, q: idle('thigh_l') },
-      ],
-      calf_l: [
-        { t: 0.0, q: idle('calf_l') },
-        { t: 0.15, q: aa('calf_l', CALF_L_EXT, -0.15) },
-        { t: 0.5, q: idle('calf_l') },
-      ],
-      _pelvisShift: [{ t: 0.0 }, { t: 0.15, dy: 2 }, { t: 0.5 }],
-    });
-
-    animClips.kickLeft = buildKickClip('kickLeft', 0.65, {
-      thigh_l: [
-        { t: 0.0, q: idle('thigh_l') },
-        { t: 0.12, q: aa('thigh_l', THIGH_L_FWD, -0.3) },
-        { t: 0.3, q: aa('thigh_l', THIGH_L_FWD, 1.5) },
-        { t: 0.45, q: aa('thigh_l', THIGH_L_FWD, 1.25) },
-        { t: 0.65, q: idle('thigh_l') },
-      ],
-      calf_l: [
-        { t: 0.0, q: idle('calf_l') },
-        { t: 0.12, q: aa('calf_l', CALF_L_EXT, -0.5) },
-        { t: 0.3, q: aa('calf_l', CALF_L_EXT, 0.4) },
-        { t: 0.45, q: aa('calf_l', CALF_L_EXT, 0.3) },
-        { t: 0.65, q: idle('calf_l') },
-      ],
-      foot_l: [
-        { t: 0.0, q: idle('foot_l') },
-        { t: 0.3, q: eu('foot_l', -0.35, 0, 0) },
-        { t: 0.65, q: idle('foot_l') },
-      ],
-      spine_01: [
-        { t: 0.0, q: idle('spine_01') },
-        { t: 0.2, q: eu('spine_01', 0, 0, 0.18) },
-        { t: 0.65, q: idle('spine_01') },
-      ],
-      thigh_r: [
-        { t: 0.0, q: idle('thigh_r') },
-        { t: 0.2, q: aa('thigh_r', THIGH_R_FWD, -0.12) },
-        { t: 0.65, q: idle('thigh_r') },
-      ],
-      _pelvisShift: [{ t: 0.0 }, { t: 0.2, dy: 3 }, { t: 0.65 }],
-    });
-
-    const LOW_KICK_DIR = new THREE.Vector3(0.05, -0.55, 0.83).normalize();
-    animClips.lowKick = buildKickClip('lowKick', 0.45, {
-      thigh_r: [
-        { t: 0.0, q: idle('thigh_r') },
-        { t: 0.1, q: aa('thigh_r', LOW_KICK_DIR, 0.45) },
-        { t: 0.25, q: aa('thigh_r', LOW_KICK_DIR, 0.8) },
-        { t: 0.45, q: idle('thigh_r') },
-      ],
-      calf_r: [
-        { t: 0.0, q: idle('calf_r') },
-        { t: 0.1, q: aa('calf_r', CALF_R_EXT, -0.25) },
-        { t: 0.25, q: aa('calf_r', CALF_R_EXT, 0.35) },
-        { t: 0.45, q: idle('calf_r') },
-      ],
-      spine_01: [
-        { t: 0.0, q: idle('spine_01') },
-        { t: 0.15, q: eu('spine_01', 0, 0, -0.15) },
-        { t: 0.45, q: idle('spine_01') },
-      ],
-      thigh_l: [
-        { t: 0.0, q: idle('thigh_l') },
-        { t: 0.15, q: aa('thigh_l', THIGH_L_FWD, 0.2) },
-        { t: 0.45, q: idle('thigh_l') },
-      ],
-      calf_l: [
-        { t: 0.0, q: idle('calf_l') },
-        { t: 0.15, q: aa('calf_l', CALF_L_EXT, -0.3) },
-        { t: 0.45, q: idle('calf_l') },
-      ],
-      _pelvisShift: [{ t: 0.0 }, { t: 0.15, dy: -5 }, { t: 0.45 }],
-    });
-
-    const SWEEP_ARC = new THREE.Vector3(0.1, 0.75, -0.65).normalize();
-    animClips.sweepKick = buildKickClip('sweepKick', 0.7, {
-      thigh_l: [
-        { t: 0.0, q: idle('thigh_l') },
-        { t: 0.1, q: aa('thigh_l', THIGH_L_FWD, 0.3) },
-        { t: 0.25, q: aa('thigh_l', SWEEP_ARC, 0.9) },
-        { t: 0.45, q: aa('thigh_l', SWEEP_ARC, 0.7) },
-        { t: 0.7, q: idle('thigh_l') },
-      ],
-      calf_l: [
-        { t: 0.0, q: idle('calf_l') },
-        { t: 0.25, q: aa('calf_l', CALF_L_EXT, 0.3) },
-        { t: 0.45, q: aa('calf_l', CALF_L_EXT, 0.2) },
-        { t: 0.7, q: idle('calf_l') },
-      ],
-      spine_01: [
-        { t: 0.0, q: idle('spine_01') },
-        { t: 0.15, q: eu('spine_01', 0, 0, -0.25) },
-        { t: 0.45, q: eu('spine_01', 0, 0, -0.25) },
-        { t: 0.7, q: idle('spine_01') },
-      ],
-      thigh_r: [
-        { t: 0.0, q: idle('thigh_r') },
-        { t: 0.15, q: aa('thigh_r', THIGH_R_FWD, 0.4) },
-        { t: 0.45, q: aa('thigh_r', THIGH_R_FWD, 0.4) },
-        { t: 0.7, q: idle('thigh_r') },
-      ],
-      calf_r: [
-        { t: 0.0, q: idle('calf_r') },
-        { t: 0.15, q: aa('calf_r', CALF_R_EXT, -0.5) },
-        { t: 0.45, q: aa('calf_r', CALF_R_EXT, -0.5) },
-        { t: 0.7, q: idle('calf_r') },
-      ],
-      _pelvisShift: [{ t: 0.0 }, { t: 0.15, dy: -10 }, { t: 0.45, dy: -10 }, { t: 0.7 }],
-    });
-  }
-
-  init(
-    baseModel: THREE.Object3D,
-    animClips: Record<string, THREE.AnimationClip>,
-    _texture: THREE.Texture,
-  ) {
-    const model = skeletonClone(baseModel);
-    this.model = model;
-
-    model.scale.set(0.013, 0.013, 0.013);
-    model.position.copy(this.position);
-    model.rotation.y = this.facing > 0 ? Math.PI / 2 : -Math.PI / 2;
-
+    // Player 2 gets a red tint
     if (this.playerIndex === 1) {
-      model.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          const mesh = child as THREE.Mesh;
-          if (Array.isArray(mesh.material)) {
-            mesh.material = mesh.material.map((m) => {
-              const cloned = (m as THREE.MeshStandardMaterial).clone();
-              cloned.color = new THREE.Color(0.6, 0.4, 0.4);
-              cloned.emissive = new THREE.Color(0.15, 0.02, 0.02);
-              return cloned;
-            });
-          } else {
-            mesh.material = (mesh.material as THREE.MeshStandardMaterial).clone();
-            (mesh.material as THREE.MeshStandardMaterial).color = new THREE.Color(0.6, 0.4, 0.4);
-            (mesh.material as THREE.MeshStandardMaterial).emissive = new THREE.Color(
-              0.15,
-              0.02,
-              0.02,
-            );
+      for (const mesh of this.meshes) {
+        if (mesh.material) {
+          const clonedMat = mesh.material.clone(`p2mat_${mesh.name}`);
+          if (!clonedMat) continue;
+          if (clonedMat instanceof PBRMaterial) {
+            clonedMat.albedoTexture = texture;
+            clonedMat.albedoColor = new Color3(0.6, 0.4, 0.4);
+            clonedMat.emissiveColor = new Color3(0.15, 0.02, 0.02);
+          } else if (clonedMat instanceof StandardMaterial) {
+            clonedMat.diffuseTexture = texture;
+            clonedMat.diffuseColor = new Color3(0.6, 0.4, 0.4);
+            clonedMat.emissiveColor = new Color3(0.15, 0.02, 0.02);
           }
+          mesh.material = clonedMat;
         }
+      }
+    }
+
+    // Build a suffix→Bone map for the cloned skeleton so the animation
+    // clone callback can remap bone targets correctly across FBX prefixes.
+    const boneByName = new Map<string, Bone>();
+    if (clonedSkeleton) {
+      for (const bone of clonedSkeleton.bones) boneByName.set(Fighter._boneSuffix(bone.name), bone);
+    }
+
+    // Clone animation groups, remapping each targeted bone to the cloned skeleton
+    for (const [name, srcGroup] of Object.entries(animGroups)) {
+      const clonedGroup = srcGroup.clone(`f${this.playerIndex}_${name}`, (target) => {
+        if (target && typeof target === 'object' && 'name' in target) {
+          const mapped = boneByName.get(Fighter._boneSuffix((target as { name: string }).name));
+          if (mapped) return mapped;
+        }
+        return target;
       });
+      clonedGroup.stop();
+      clonedGroup.loopAnimation = LOOP_ANIMS.has(name);
+      this.animGroups[name] = clonedGroup;
     }
 
-    this.rootBone = null;
-    const matSet = new Set<THREE.Material>();
-    model.traverse((child) => {
-      if ((child as THREE.Bone).isBone && !this.rootBone) {
-        this.rootBone = child as THREE.Bone;
-        this.rootBoneBindX = child.position.x;
-        this.rootBoneBindZ = child.position.z;
-      }
-      if ((child as THREE.Mesh).isMesh) {
-        const mesh = child as THREE.Mesh;
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        mats.forEach((m) => {
-          matSet.add(m);
-        });
-      }
-    });
-    this._cachedMaterials = [...matSet];
+    this.rootNode.position.copyFrom(this.position);
+    // Babylon left-handed: negate rotation vs Three.js
+    this.rootNode.rotation.y = this.facing > 0 ? -Math.PI / 2 : Math.PI / 2;
 
-    this.mixer = new THREE.AnimationMixer(model);
-
-    const onceAnimations = new Set([
-      'punch1',
-      'punch2',
-      'heavyPunch',
-      'hurt1',
-      'hurt2',
-      'jump',
-      'landing',
-      'victory',
-      'leanRight',
-      'leanLeft',
-      'kickRight',
-      'kickLeft',
-      'lowKick',
-      'sweepKick',
-    ]);
-
-    for (const [name, clip] of Object.entries(animClips)) {
-      this.animations[name] = clip;
-      const action = this.mixer.clipAction(clip);
-      this.actions[name] = action;
-
-      action.setEffectiveTimeScale(1);
-      action.setEffectiveWeight(0);
-
-      if (onceAnimations.has(name)) {
-        action.setLoop(THREE.LoopOnce, 1);
-        action.clampWhenFinished = true;
-      } else {
-        action.setLoop(THREE.LoopRepeat, Infinity);
-        action.clampWhenFinished = false;
-      }
-    }
-
-    this.scene.add(model);
     this.playAnimation('combatIdle', 0.2);
   }
 
-  playAnimation(name: string, crossfadeDuration = 0.15, speed = 1.0) {
-    const newAction = this.actions[name];
-    if (!newAction) return;
+  playAnimation(name: string, _crossfadeDuration = 0.15, speed = 1.0) {
+    const newGroup = this.animGroups[name];
+    if (!newGroup) return;
 
-    if (this.currentAction === newAction && newAction.isRunning()) return;
+    if (this.currentAnimGroup === newGroup && newGroup.isPlaying) return;
 
-    newAction.reset();
-    newAction.setEffectiveTimeScale(speed);
-    newAction.setEffectiveWeight(1);
-
-    if (this.currentAction && this.currentAction !== newAction) {
-      this.currentAction.fadeOut(crossfadeDuration);
-      newAction.fadeIn(crossfadeDuration);
+    if (this.currentAnimGroup && this.currentAnimGroup !== newGroup) {
+      this.currentAnimGroup.stop();
     }
 
-    newAction.play();
-    this.currentAction = newAction;
+    newGroup.speedRatio = speed;
+    newGroup.start(newGroup.loopAnimation, speed);
+    this.currentAnimGroup = newGroup;
   }
 
   reset(startX: number) {
@@ -812,7 +396,7 @@ export class Fighter {
     this.playAnimation('combatIdle', 0.3);
   }
 
-  processInput(input: InputState, opponentPos: THREE.Vector3) {
+  processInput(input: InputState, opponentPos: Vector3) {
     const dxWorld = opponentPos.x - this.position.x;
     const dzWorld = opponentPos.z - this.position.z;
     const toOpponentAngle = Math.atan2(dzWorld, dxWorld);
@@ -1179,13 +763,16 @@ export class Fighter {
     this.state = FIGHTER_STATE.ATTACKING;
 
     const animName = move.animation;
-    const clip = this.animations[animName];
+    const group = this.animGroups[animName];
     const totalFrames = move.startupFrames + move.activeFrames + move.recoveryFrames;
     const moveDuration = totalFrames / 60;
     let speed = move.animSpeed || 1.0;
-    if (clip && clip.duration > 0 && moveDuration > 0) {
-      speed = clip.duration / moveDuration;
-      speed = Math.max(0.3, Math.min(speed, 4.0));
+    if (group) {
+      const groupDuration = group.to - group.from;
+      if (groupDuration > 0 && moveDuration > 0) {
+        speed = groupDuration / moveDuration;
+        speed = Math.max(0.3, Math.min(speed, 4.0));
+      }
     }
 
     this.playAnimation(animName, isCombo ? 0.08 : 0.1, speed);
@@ -1312,45 +899,40 @@ export class Fighter {
     if (this.hitFlash > 0) this.hitFlash--;
   }
 
-  updateVisuals(deltaTime: number) {
-    if (!this.model) return;
-
-    if (this.mixer) {
-      this.mixer.update(deltaTime);
+  private _applyEmissiveFlash(flashActive: boolean) {
+    const idleEmissive = this.playerIndex === 1 ? new Color3(0.15, 0.02, 0.02) : Color3.Black();
+    const emissive = flashActive ? new Color3(0.5, 0.5, 0.5) : idleEmissive;
+    for (const mesh of this.meshes) {
+      const mat = mesh.material;
+      if (mat instanceof PBRMaterial) {
+        mat.emissiveColor = emissive;
+      } else if (mat instanceof StandardMaterial) {
+        mat.emissiveColor = emissive;
+      }
     }
+  }
 
-    if (this.rootBone) {
-      this.rootBone.position.x = this.rootBoneBindX;
-      this.rootBone.position.z = this.rootBoneBindZ;
-    }
+  updateVisuals() {
+    if (!this.rootNode) return;
 
-    this.model.position.copy(this.position);
+    this.rootNode.position.copyFrom(this.position);
 
-    const targetRotY = Math.PI / 2 - this.facingAngle;
-    let diff = targetRotY - this.model.rotation.y;
+    // Babylon left-handed rotation: negate compared to Three.js
+    const targetRotY = -(Math.PI / 2 - this.facingAngle);
+    let diff = targetRotY - this.rootNode.rotation.y;
     while (diff > Math.PI) diff -= 2 * Math.PI;
     while (diff < -Math.PI) diff += 2 * Math.PI;
-    this.model.rotation.y += diff * 0.2;
+    this.rootNode.rotation.y += diff * 0.2;
 
-    if (this.hitFlash >= 0 && this._cachedMaterials) {
+    if (this.hitFlash >= 0) {
       const flashActive = this.hitFlash > 0;
-      const p2Tint = this.playerIndex === 1;
-      for (let i = 0; i < this._cachedMaterials.length; i++) {
-        const m = this._cachedMaterials[i] as THREE.MeshStandardMaterial;
-        if (flashActive) {
-          m.emissive.setScalar(0.5);
-        } else if (p2Tint) {
-          m.emissive.set(0.15, 0.02, 0.02);
-        } else {
-          m.emissive.setScalar(0);
-        }
-      }
+      this._applyEmissiveFlash(flashActive);
       if (!flashActive) this.hitFlash = -1;
     }
 
     if (this.state === FIGHTER_STATE.BLOCK_STUN) {
-      this.model.position.x -= Math.cos(this.facingAngle) * 0.05;
-      this.model.position.z -= Math.sin(this.facingAngle) * 0.05;
+      this.rootNode.position.x -= Math.cos(this.facingAngle) * 0.05;
+      this.rootNode.position.z -= Math.sin(this.facingAngle) * 0.05;
     }
   }
 
@@ -1442,16 +1024,19 @@ export class Fighter {
       case FIGHTER_STATE.ATTACKING:
         if (this.currentMove) {
           const animName = this.currentMove.animation;
-          const clip = this.animations[animName];
+          const group = this.animGroups[animName];
           const totalFrames =
             this.currentMove.startupFrames +
             this.currentMove.activeFrames +
             this.currentMove.recoveryFrames;
           const moveDuration = totalFrames / 60;
           let speed = this.currentMove.animSpeed || 1.0;
-          if (clip && clip.duration > 0 && moveDuration > 0) {
-            speed = clip.duration / moveDuration;
-            speed = Math.max(0.3, Math.min(speed, 4.0));
+          if (group) {
+            const groupDuration = group.to - group.from;
+            if (groupDuration > 0 && moveDuration > 0) {
+              speed = groupDuration / moveDuration;
+              speed = Math.max(0.3, Math.min(speed, 4.0));
+            }
           }
           this.playAnimation(animName, 0.1, speed);
         }

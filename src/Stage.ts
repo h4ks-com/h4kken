@@ -1,93 +1,136 @@
 // ============================================================
-// H4KKEN - Stage (Arena, Lighting, Environment)
-// Bright tournament arena with proper fighting-game aesthetics
+// H4KKEN - Stage (Arena, Lighting, Environment) — Babylon.js
 // ============================================================
 
-import * as THREE from 'three';
+import {
+  Color3,
+  DirectionalLight,
+  Effect,
+  HemisphericLight,
+  MeshBuilder,
+  PointLight,
+  Scene,
+  ShaderMaterial,
+  ShadowGenerator,
+  StandardMaterial,
+  Vector3,
+} from '@babylonjs/core';
 
 export class Stage {
-  scene: THREE.Scene;
-  objects: THREE.Object3D[];
+  scene: Scene;
+  flameLights: PointLight[];
   time: number;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: Scene) {
     this.scene = scene;
-    this.objects = [];
+    this.flameLights = [];
     this.time = 0;
     this.build();
   }
 
   build() {
+    this.setupLighting();
+    this.buildArena();
+    this.createBackdrop();
+    this.buildSky();
+
+    // Linear fog — Babylon fog is in scene
+    this.scene.fogMode = Scene.FOGMODE_LINEAR;
+    this.scene.fogColor = new Color3(0.6, 0.8, 0.933);
+    this.scene.fogStart = 40;
+    this.scene.fogEnd = 90;
+  }
+
+  setupLighting() {
+    const ambient = new HemisphericLight('ambient', new Vector3(0, 1, 0), this.scene);
+    ambient.intensity = 0.4;
+    ambient.diffuse = new Color3(1, 1, 1);
+    ambient.groundColor = new Color3(0.27, 0.33, 0.13);
+    ambient.specular = new Color3(0.53, 0.73, 1);
+
+    const sun = new DirectionalLight('sun', new Vector3(-8, -18, -10).normalize(), this.scene);
+    sun.diffuse = new Color3(1, 0.96, 0.878);
+    sun.intensity = 0.8;
+    sun.position = new Vector3(8, 18, 10);
+
+    const shadowGen = new ShadowGenerator(1024, sun);
+    shadowGen.usePoissonSampling = true;
+    shadowGen.bias = 0.001;
+
+    // Expose shadow generator so arena meshes can be added to it
+    this._shadowGen = shadowGen;
+  }
+
+  private _shadowGen: ShadowGenerator | null = null;
+
+  buildArena() {
     const arenaRadius = 14;
-    const platformGeo = new THREE.CylinderGeometry(arenaRadius, arenaRadius + 0.3, 0.6, 32);
-    const platformMat = new THREE.MeshStandardMaterial({
-      color: 0xc8b89a,
-      metalness: 0.15,
-      roughness: 0.55,
-    });
-    const platform = new THREE.Mesh(platformGeo, platformMat);
+
+    // Main platform
+    const platform = MeshBuilder.CreateCylinder(
+      'platform',
+      {
+        diameter: (arenaRadius + 0.3) * 2,
+        diameterTop: arenaRadius * 2,
+        height: 0.6,
+        tessellation: 32,
+      },
+      this.scene,
+    );
     platform.position.y = -0.3;
-    platform.receiveShadow = true;
-    this.scene.add(platform);
-    this.objects.push(platform);
+    platform.receiveShadows = true;
+    const platMat = new StandardMaterial('platMat', this.scene);
+    platMat.diffuseColor = new Color3(0.784, 0.722, 0.604);
+    platMat.specularColor = new Color3(0.1, 0.1, 0.1);
+    platform.material = platMat;
+    this._shadowGen?.addShadowCaster(platform);
 
-    const fightAreaGeo = new THREE.CylinderGeometry(10, 10, 0.08, 32);
-    const fightAreaMat = new THREE.MeshStandardMaterial({
-      color: 0x8b7355,
-      metalness: 0.3,
-      roughness: 0.35,
-    });
-    const fightArea = new THREE.Mesh(fightAreaGeo, fightAreaMat);
+    // Fight area disk
+    const fightArea = MeshBuilder.CreateCylinder(
+      'fightArea',
+      { diameter: 20, height: 0.08, tessellation: 32 },
+      this.scene,
+    );
     fightArea.position.y = 0.01;
-    fightArea.receiveShadow = true;
-    this.scene.add(fightArea);
-    this.objects.push(fightArea);
+    fightArea.receiveShadows = true;
+    const faMat = new StandardMaterial('faMat', this.scene);
+    faMat.diffuseColor = new Color3(0.545, 0.451, 0.333);
+    faMat.specularPower = 64;
+    fightArea.material = faMat;
 
-    const centerGeo = new THREE.PlaneGeometry(0.06, 6);
-    const centerMat = new THREE.MeshBasicMaterial({
-      color: 0xffd700,
-      transparent: true,
-      opacity: 0.5,
-    });
-    const centerLine = new THREE.Mesh(centerGeo, centerMat);
-    centerLine.rotation.x = -Math.PI / 2;
-    centerLine.position.y = 0.06;
-    this.scene.add(centerLine);
-
-    const ringGeo = new THREE.TorusGeometry(10, 0.08, 6, 32);
-    const ringMat = new THREE.MeshStandardMaterial({
-      color: 0xffd700,
-      metalness: 0.8,
-      roughness: 0.2,
-      emissive: new THREE.Color(0xaa8800),
-      emissiveIntensity: 0.3,
-    });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.rotation.x = Math.PI / 2;
+    // Gold ring at edge of fight area
+    const ring = MeshBuilder.CreateTorus(
+      'ring',
+      { diameter: 20, thickness: 0.16, tessellation: 32 },
+      this.scene,
+    );
     ring.position.y = 0.06;
-    this.scene.add(ring);
-    this.objects.push(ring);
+    const ringMat = new StandardMaterial('ringMat', this.scene);
+    ringMat.diffuseColor = new Color3(1, 0.843, 0);
+    ringMat.emissiveColor = new Color3(0.267, 0.2, 0);
+    ringMat.specularPower = 128;
+    ring.material = ringMat;
 
-    const outerRingGeo = new THREE.TorusGeometry(arenaRadius, 0.12, 6, 32);
-    const outerRingMat = new THREE.MeshStandardMaterial({
-      color: 0x997744,
-      metalness: 0.5,
-      roughness: 0.4,
-    });
-    const outerRing = new THREE.Mesh(outerRingGeo, outerRingMat);
-    outerRing.rotation.x = Math.PI / 2;
+    // Outer ring
+    const outerRing = MeshBuilder.CreateTorus(
+      'outerRing',
+      { diameter: arenaRadius * 2, thickness: 0.24, tessellation: 32 },
+      this.scene,
+    );
     outerRing.position.y = 0.02;
-    this.scene.add(outerRing);
-    this.objects.push(outerRing);
+    const outerRingMat = new StandardMaterial('outerRingMat', this.scene);
+    outerRingMat.diffuseColor = new Color3(0.6, 0.467, 0.267);
+    outerRing.material = outerRingMat;
 
-    const groundGeo = new THREE.PlaneGeometry(200, 200);
-    const groundMat = new THREE.MeshLambertMaterial({ color: 0x6b8f5e });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
-    ground.rotation.x = -Math.PI / 2;
+    // Ground plane
+    const ground = MeshBuilder.CreateGround('ground', { width: 200, height: 200 }, this.scene);
     ground.position.y = -0.6;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
+    ground.receiveShadows = true;
+    const groundMat = new StandardMaterial('groundMat', this.scene);
+    groundMat.diffuseColor = new Color3(0.42, 0.56, 0.369);
+    ground.material = groundMat;
 
+    // Pillars with flame lights
     const pillarAngles = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
     const pillarDist = arenaRadius + 1.5;
 
@@ -95,133 +138,88 @@ export class Stage {
       const px = Math.cos(angle) * pillarDist;
       const pz = Math.sin(angle) * pillarDist;
 
-      const baseGeo = new THREE.CylinderGeometry(0.45, 0.55, 0.8, 6);
-      const baseMat = new THREE.MeshLambertMaterial({ color: 0x887766 });
-      const base = new THREE.Mesh(baseGeo, baseMat);
+      const base = MeshBuilder.CreateCylinder(
+        `pillarBase${i}`,
+        { diameterTop: 0.9, diameterBottom: 1.1, height: 0.8, tessellation: 6 },
+        this.scene,
+      );
       base.position.set(px, 0.1, pz);
-      this.scene.add(base);
+      const baseMat = new StandardMaterial(`pillarBaseMat${i}`, this.scene);
+      baseMat.diffuseColor = new Color3(0.533, 0.467, 0.4);
+      base.material = baseMat;
 
-      const colGeo = new THREE.CylinderGeometry(0.3, 0.35, 5, 6);
-      const colMat = new THREE.MeshLambertMaterial({ color: 0x998877 });
-      const col = new THREE.Mesh(colGeo, colMat);
+      const col = MeshBuilder.CreateCylinder(
+        `pillarCol${i}`,
+        { diameterTop: 0.6, diameterBottom: 0.7, height: 5, tessellation: 6 },
+        this.scene,
+      );
       col.position.set(px, 3, pz);
-      this.scene.add(col);
+      const colMat = new StandardMaterial(`pillarColMat${i}`, this.scene);
+      colMat.diffuseColor = new Color3(0.6, 0.533, 0.467);
+      col.material = colMat;
 
-      const capGeo = new THREE.CylinderGeometry(0.5, 0.35, 0.4, 6);
-      const capMat = new THREE.MeshLambertMaterial({ color: 0xaa9977 });
-      const cap = new THREE.Mesh(capGeo, capMat);
+      const cap = MeshBuilder.CreateCylinder(
+        `pillarCap${i}`,
+        { diameterTop: 1.0, diameterBottom: 0.7, height: 0.4, tessellation: 6 },
+        this.scene,
+      );
       cap.position.set(px, 5.7, pz);
-      this.scene.add(cap);
+      const capMat = new StandardMaterial(`pillarCapMat${i}`, this.scene);
+      capMat.diffuseColor = new Color3(0.667, 0.6, 0.467);
+      cap.material = capMat;
 
-      const flame = new THREE.PointLight(i % 2 === 0 ? 0xff6622 : 0xff8844, 1.2, 18, 1.5);
-      flame.position.set(px, 6.3, pz);
-      flame.castShadow = false;
-      this.scene.add(flame);
-      this.objects.push(flame);
+      const flameColor = i % 2 === 0 ? new Color3(1, 0.4, 0.133) : new Color3(1, 0.533, 0.267);
+      const flame = new PointLight(`flame${i}`, new Vector3(px, 6.3, pz), this.scene);
+      flame.diffuse = flameColor;
+      flame.intensity = 1.2;
+      flame.range = 18;
+      this.flameLights.push(flame);
     });
-
-    this.createBackdrop();
-    this.setupLighting();
-
-    const skyGeo = new THREE.SphereGeometry(90, 16, 16);
-    const skyMat = new THREE.ShaderMaterial({
-      side: THREE.BackSide,
-      uniforms: {
-        topColor: { value: new THREE.Color(0x3388cc) },
-        horizColor: { value: new THREE.Color(0x99ccee) },
-        bottomColor: { value: new THREE.Color(0x88aa77) },
-      },
-      vertexShader: `
-        varying vec3 vWorldPosition;
-        void main() {
-          vec4 wp = modelMatrix * vec4(position, 1.0);
-          vWorldPosition = wp.xyz;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 topColor;
-        uniform vec3 horizColor;
-        uniform vec3 bottomColor;
-        varying vec3 vWorldPosition;
-        void main() {
-          float h = normalize(vWorldPosition).y;
-          vec3 color;
-          if (h > 0.0) {
-            color = mix(horizColor, topColor, pow(h, 0.5));
-          } else {
-            color = mix(horizColor, bottomColor, pow(-h, 0.4));
-          }
-          gl_FragColor = vec4(color, 1.0);
-        }
-      `,
-    });
-    const sky = new THREE.Mesh(skyGeo, skyMat);
-    this.scene.add(sky);
-
-    this.scene.fog = new THREE.Fog(0x99ccee, 40, 90);
-  }
-
-  setupLighting() {
-    const ambient = new THREE.AmbientLight(0xffffff, 0.8);
-    this.scene.add(ambient);
-
-    const hemi = new THREE.HemisphereLight(0x88bbff, 0x445522, 0.7);
-    hemi.position.set(0, 20, 0);
-    this.scene.add(hemi);
-
-    const sun = new THREE.DirectionalLight(0xfff5e0, 1.6);
-    sun.position.set(8, 18, 10);
-    sun.castShadow = true;
-    sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 50;
-    sun.shadow.camera.left = -14;
-    sun.shadow.camera.right = 14;
-    sun.shadow.camera.top = 14;
-    sun.shadow.camera.bottom = -14;
-    sun.shadow.mapSize.width = 1024;
-    sun.shadow.mapSize.height = 1024;
-    sun.shadow.bias = -0.001;
-    this.scene.add(sun);
   }
 
   createBackdrop() {
     const mountainDefs = [
-      { x: -45, z: -55, h: 22, r: 14, c: 0x667766 },
-      { x: -25, z: -60, h: 30, r: 18, c: 0x5a6b5a },
-      { x: 5, z: -65, h: 35, r: 20, c: 0x556655 },
-      { x: 30, z: -58, h: 25, r: 15, c: 0x607060 },
-      { x: 50, z: -55, h: 20, r: 12, c: 0x6b7b6b },
-      { x: -55, z: -50, h: 18, r: 11, c: 0x708070 },
-      { x: 55, z: -60, h: 24, r: 16, c: 0x5e6e5e },
+      { x: -45, z: -55, h: 22, r: 14, c: new Color3(0.4, 0.467, 0.4) },
+      { x: -25, z: -60, h: 30, r: 18, c: new Color3(0.353, 0.42, 0.353) },
+      { x: 5, z: -65, h: 35, r: 20, c: new Color3(0.333, 0.4, 0.333) },
+      { x: 30, z: -58, h: 25, r: 15, c: new Color3(0.376, 0.439, 0.376) },
+      { x: 50, z: -55, h: 20, r: 12, c: new Color3(0.42, 0.482, 0.42) },
+      { x: -55, z: -50, h: 18, r: 11, c: new Color3(0.439, 0.502, 0.439) },
+      { x: 55, z: -60, h: 24, r: 16, c: new Color3(0.369, 0.431, 0.369) },
     ];
 
     mountainDefs.forEach((m) => {
-      const geo = new THREE.ConeGeometry(m.r, m.h, 5);
-      const mat = new THREE.MeshLambertMaterial({ color: m.c, flatShading: true });
-      const mesh = new THREE.Mesh(geo, mat);
+      const mesh = MeshBuilder.CreateCylinder(
+        'mountain',
+        { diameterTop: 0, diameterBottom: m.r * 2, height: m.h, tessellation: 5 },
+        this.scene,
+      );
       mesh.position.set(m.x, m.h / 2 - 2, m.z);
       mesh.rotation.y = Math.random() * Math.PI;
-      this.scene.add(mesh);
-    });
+      const mat = new StandardMaterial('mountainMat', this.scene);
+      mat.diffuseColor = m.c;
+      mesh.material = mat;
 
-    mountainDefs
-      .filter((m) => m.h > 25)
-      .forEach((m) => {
-        const capGeo = new THREE.ConeGeometry(m.r * 0.35, m.h * 0.2, 5);
-        const capMat = new THREE.MeshLambertMaterial({ color: 0xdde8dd, flatShading: true });
-        const cap = new THREE.Mesh(capGeo, capMat);
+      if (m.h > 25) {
+        const cap = MeshBuilder.CreateCylinder(
+          'mountainCap',
+          { diameterTop: 0, diameterBottom: m.r * 0.7, height: m.h * 0.2, tessellation: 5 },
+          this.scene,
+        );
         cap.position.set(m.x, m.h - 2, m.z);
         cap.rotation.y = Math.random() * Math.PI;
-        this.scene.add(cap);
-      });
+        const capMat = new StandardMaterial('mountainCapMat', this.scene);
+        capMat.diffuseColor = new Color3(0.867, 0.91, 0.867);
+        cap.material = capMat;
+      }
+    });
 
     const treeCount = 14;
-    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x664422 });
-    const leafMats = [
-      new THREE.MeshLambertMaterial({ color: 0x2e6b1e, flatShading: true }),
-      new THREE.MeshLambertMaterial({ color: 0x388526, flatShading: true }),
-      new THREE.MeshLambertMaterial({ color: 0x429f2e, flatShading: true }),
+    const trunkColor = new Color3(0.4, 0.267, 0.133);
+    const leafColors = [
+      new Color3(0.18, 0.42, 0.118),
+      new Color3(0.22, 0.522, 0.149),
+      new Color3(0.259, 0.624, 0.18),
     ];
 
     for (let i = 0; i < treeCount; i++) {
@@ -231,35 +229,92 @@ export class Stage {
       const tz = Math.sin(angle) * dist;
       const s = 0.7 + Math.random() * 0.8;
 
-      const trunkGeo = new THREE.CylinderGeometry(0.15 * s, 0.25 * s, 3 * s, 5);
-      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      const trunk = MeshBuilder.CreateCylinder(
+        'trunk',
+        { diameterTop: 0.3 * s, diameterBottom: 0.5 * s, height: 3 * s, tessellation: 5 },
+        this.scene,
+      );
       trunk.position.set(tx, 1.5 * s - 0.6, tz);
-      this.scene.add(trunk);
+      const trunkMat = new StandardMaterial('trunkMat', this.scene);
+      trunkMat.diffuseColor = trunkColor;
+      trunk.material = trunkMat;
 
       for (let j = 0; j < 3; j++) {
         const r = (2.2 - j * 0.5) * s;
         const h = (2.0 - j * 0.3) * s;
         const y = (2.5 + j * 1.4) * s - 0.6;
-        const leafGeo = new THREE.ConeGeometry(r, h, 5);
-        const leaf = new THREE.Mesh(leafGeo, leafMats[j]);
+        const leaf = MeshBuilder.CreateCylinder(
+          'leaf',
+          { diameterTop: 0, diameterBottom: r * 2, height: h, tessellation: 5 },
+          this.scene,
+        );
         leaf.position.set(tx, y, tz);
         leaf.rotation.y = Math.random() * Math.PI;
-        this.scene.add(leaf);
+        const leafMat = new StandardMaterial('leafMat', this.scene);
+        leafMat.diffuseColor = leafColors[j] ?? new Color3(0.18, 0.42, 0.118);
+        leaf.material = leafMat;
       }
     }
+  }
+
+  buildSky() {
+    // Custom shader sky sphere — Babylon left-handed, BackSide equivalent is
+    // achieved by setting backFaceCulling = false and sideOrientation = BACKSIDE
+    Effect.ShadersStore.skyVertexShader = `
+      precision highp float;
+      attribute vec3 position;
+      uniform mat4 worldViewProjection;
+      varying vec3 vWorldPosition;
+      void main() {
+        vWorldPosition = position;
+        gl_Position = worldViewProjection * vec4(position, 1.0);
+      }
+    `;
+    Effect.ShadersStore.skyFragmentShader = `
+      precision highp float;
+      uniform vec3 topColor;
+      uniform vec3 horizColor;
+      uniform vec3 bottomColor;
+      varying vec3 vWorldPosition;
+      void main() {
+        float h = normalize(vWorldPosition).y;
+        vec3 color;
+        if (h > 0.0) {
+          color = mix(horizColor, topColor, pow(h, 0.5));
+        } else {
+          color = mix(horizColor, bottomColor, pow(-h, 0.4));
+        }
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `;
+
+    const sky = MeshBuilder.CreateSphere('sky', { diameter: 180, segments: 16 }, this.scene);
+    const skyMat = new ShaderMaterial(
+      'skyMat',
+      this.scene,
+      { vertex: 'sky', fragment: 'sky' },
+      {
+        attributes: ['position'],
+        uniforms: ['worldViewProjection', 'topColor', 'horizColor', 'bottomColor'],
+      },
+    );
+    skyMat.setColor3('topColor', new Color3(0.2, 0.533, 0.8));
+    skyMat.setColor3('horizColor', new Color3(0.6, 0.8, 0.933));
+    skyMat.setColor3('bottomColor', new Color3(0.533, 0.667, 0.467));
+    skyMat.backFaceCulling = false;
+    sky.material = skyMat;
+    // Sky should not receive fog
+    sky.applyFog = false;
   }
 
   update(deltaTime: number) {
     this.time += deltaTime;
 
-    for (const obj of this.objects) {
-      if ((obj as THREE.PointLight).isPointLight) {
-        const light = obj as THREE.PointLight;
-        light.intensity =
-          1.0 +
-          Math.sin(this.time * 6 + obj.position.x) * 0.3 +
-          Math.sin(this.time * 9.7 + obj.position.z) * 0.15;
-      }
+    for (const light of this.flameLights) {
+      light.intensity =
+        1.0 +
+        Math.sin(this.time * 6 + light.position.x) * 0.3 +
+        Math.sin(this.time * 9.7 + light.position.z) * 0.15;
     }
   }
 }

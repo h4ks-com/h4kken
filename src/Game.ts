@@ -1,8 +1,19 @@
 // ============================================================
 // H4KKEN - Game Manager (Main Game Loop, State, Round Logic)
+// Babylon.js
 // ============================================================
 
-import * as THREE from 'three';
+import {
+  Color3,
+  DefaultRenderingPipeline,
+  Engine,
+  FreeCamera,
+  type Mesh,
+  MeshBuilder,
+  Scene,
+  StandardMaterial,
+  Vector3,
+} from '@babylonjs/core';
 import { FightCamera } from './Camera';
 import { CombatSystem, FIGHTER_STATE, GAME_CONSTANTS } from './Combat';
 import { Fighter, type SharedAssets } from './Fighter';
@@ -26,10 +37,10 @@ const GAME_STATE = {
 
 export class Game {
   state: string;
-  canvas: HTMLElement | null;
-  renderer: THREE.WebGLRenderer;
-  scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
+  canvas: HTMLCanvasElement;
+  engine: Engine;
+  scene: Scene;
+  camera: FreeCamera;
   input: InputManager;
   fightCamera: FightCamera;
   stage: Stage | null;
@@ -42,12 +53,12 @@ export class Game {
   roundTimer: number;
   roundTimerAccum: number;
   isPractice: boolean;
-  hitParticles: THREE.Mesh[];
-  _sparkPool: THREE.Mesh[];
-  _sparkGeo: THREE.SphereGeometry;
-  _hitMats: [THREE.MeshBasicMaterial, THREE.MeshBasicMaterial];
-  _blockMat: THREE.MeshBasicMaterial;
-  clock: THREE.Clock;
+  hitParticles: Mesh[];
+  _sparkPool: Mesh[];
+  _sparkGeo: Mesh;
+  _hitMat0: StandardMaterial;
+  _hitMat1: StandardMaterial;
+  _blockMat: StandardMaterial;
   tickRate: number;
   tickDuration: number;
   accumulator: number;
@@ -55,30 +66,35 @@ export class Game {
   pendingOpponentInput: InputState | null;
   lastOpponentInput: InputState;
   bgm: HTMLAudioElement;
-  gameLoop: () => void;
   onResize: () => void;
   _roundResetting: boolean;
 
   constructor() {
     this.state = GAME_STATE.LOADING;
-    this.canvas = document.getElementById('game-canvas');
 
-    this.renderer = new THREE.WebGLRenderer({
-      canvas: this.canvas as HTMLCanvasElement,
-      antialias: true,
-      alpha: false,
-    });
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.renderer.shadowMap.autoUpdate = false;
-    this.renderer.shadowMap.needsUpdate = true;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
+    const canvasEl = document.getElementById('game-canvas');
+    if (!(canvasEl instanceof HTMLCanvasElement)) throw new Error('No canvas element found');
+    this.canvas = canvasEl;
 
-    this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    this.engine = new Engine(this.canvas, true, { antialias: true });
+    this.engine.setSize(window.innerWidth, window.innerHeight);
+
+    this.scene = new Scene(this.engine);
+    this.scene.ambientColor = new Color3(0.1, 0.1, 0.1);
+
+    this.camera = new FreeCamera('camera', new Vector3(0, 3, -10), this.scene);
+    this.camera.inputs.clear(); // prevent FreeCamera from hijacking WASD/arrow keys
+    this.camera.minZ = 0.1;
+    this.camera.maxZ = 100;
+    this.camera.fov = 0.785; // ~45 degrees in radians
+
+    // Bloom via DefaultRenderingPipeline
+    const pipeline = new DefaultRenderingPipeline('pipeline', true, this.scene, [this.camera]);
+    pipeline.bloomEnabled = true;
+    pipeline.bloomThreshold = 0.82;
+    pipeline.bloomWeight = 0.55;
+    pipeline.bloomKernel = 64;
+    pipeline.bloomScale = 0.5;
 
     this.input = new InputManager();
     this.fightCamera = new FightCamera(this.camera);
@@ -98,14 +114,31 @@ export class Game {
 
     this.hitParticles = [];
     this._sparkPool = [];
-    this._sparkGeo = new THREE.SphereGeometry(0.03, 3, 3);
-    this._hitMats = [
-      new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true }),
-      new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true }),
-    ];
-    this._blockMat = new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true });
 
-    this.clock = new THREE.Clock();
+    // Create a hidden template sphere for sparks — we clone it from the pool
+    const sparkTemplate = MeshBuilder.CreateSphere(
+      'sparkTemplate',
+      { diameter: 0.06, segments: 2 },
+      this.scene,
+    );
+    sparkTemplate.setEnabled(false);
+    this._sparkGeo = sparkTemplate;
+
+    this._hitMat0 = new StandardMaterial('hitMat0', this.scene);
+    this._hitMat0.diffuseColor = new Color3(1, 0.4, 0);
+    this._hitMat0.emissiveColor = new Color3(1, 0.4, 0);
+    this._hitMat0.alpha = 1;
+
+    this._hitMat1 = new StandardMaterial('hitMat1', this.scene);
+    this._hitMat1.diffuseColor = new Color3(1, 0.8, 0);
+    this._hitMat1.emissiveColor = new Color3(1, 0.8, 0);
+    this._hitMat1.alpha = 1;
+
+    this._blockMat = new StandardMaterial('blockMat', this.scene);
+    this._blockMat.diffuseColor = new Color3(0.267, 0.533, 1);
+    this._blockMat.emissiveColor = new Color3(0.267, 0.533, 1);
+    this._blockMat.alpha = 1;
+
     this.tickRate = 60;
     this.tickDuration = 1 / this.tickRate;
     this.accumulator = 0;
@@ -118,7 +151,6 @@ export class Game {
     this.bgm.loop = true;
     this.bgm.volume = 0.5;
 
-    this.gameLoop = this._gameLoop.bind(this);
     this.onResize = this._onResize.bind(this);
     window.addEventListener('resize', this.onResize);
 
@@ -262,7 +294,7 @@ export class Game {
 
     this.stage = new Stage(this.scene);
 
-    this.sharedAssets = await Fighter.loadAssets((progress: number) => {
+    this.sharedAssets = await Fighter.loadAssets(this.scene, (progress: number) => {
       this.ui.setLoadingProgress(progress);
     });
 
@@ -282,18 +314,18 @@ export class Game {
       this.ui.showScreen('menu-screen');
     }, 500);
 
-    this._gameLoop();
+    // Babylon render loop — replaces requestAnimationFrame
+    this.engine.runRenderLoop(() => this._gameLoop());
   }
 
   createFighters() {
     if (!this.sharedAssets) throw new Error('SharedAssets not loaded');
-    const { baseModel, animClips, texture } = this.sharedAssets;
 
     this.fighters[0] = new Fighter(0, this.scene);
-    this.fighters[0].init(baseModel, animClips, texture);
+    this.fighters[0].init(this.sharedAssets);
 
     this.fighters[1] = new Fighter(1, this.scene);
-    this.fighters[1].init(baseModel, animClips, texture);
+    this.fighters[1].init(this.sharedAssets);
   }
 
   prepareMatch() {
@@ -366,9 +398,8 @@ export class Game {
   // ============================================================
 
   private _gameLoop() {
-    requestAnimationFrame(this.gameLoop);
-
-    const deltaTime = Math.min(this.clock.getDelta(), 0.05);
+    // engine.getDeltaTime() returns ms; convert to seconds
+    const deltaTime = Math.min(this.engine.getDeltaTime() / 1000, 0.05);
     this.accumulator += deltaTime;
 
     while (this.accumulator >= this.tickDuration) {
@@ -378,6 +409,7 @@ export class Game {
     }
 
     this.render(deltaTime);
+    this.scene.render();
   }
 
   fixedUpdate() {
@@ -449,7 +481,8 @@ export class Game {
   }
 
   private buildInputs(rawInput: InputState): [InputState, InputState] {
-    let p1Input: InputState, p2Input: InputState;
+    let p1Input: InputState;
+    let p2Input: InputState;
 
     if (this.isPractice) {
       const f2 = this.fighters[1];
@@ -752,47 +785,47 @@ export class Game {
   // 3D HIT EFFECTS
   // ============================================================
 
-  _getPooledSpark(mat: THREE.Material) {
-    let spark: THREE.Mesh;
+  _getPooledSpark(mat: StandardMaterial): Mesh {
     const pooled = this._sparkPool.pop();
     if (pooled !== undefined) {
-      spark = pooled;
-      spark.material = mat;
-      spark.visible = true;
-    } else {
-      spark = new THREE.Mesh(this._sparkGeo, mat);
-      this.scene.add(spark);
+      pooled.material = mat;
+      pooled.setEnabled(true);
+      return pooled;
     }
+    const spark = this._sparkGeo.clone('spark');
+    spark.material = mat;
+    spark.setEnabled(true);
     return spark;
   }
 
-  spawnHitSpark(position: THREE.Vector3, attackerFacingAngle: number) {
+  spawnHitSpark(position: Vector3, attackerFacingAngle: number) {
     const cosA = Math.cos(attackerFacingAngle);
     const sinA = Math.sin(attackerFacingAngle);
     const count = 8;
     for (let i = 0; i < count; i++) {
-      const mat = (i & 1) === 0 ? this._hitMats[0] : this._hitMats[1];
+      const mat = (i & 1) === 0 ? this._hitMat0 : this._hitMat1;
       const spark = this._getPooledSpark(mat);
       spark.position.set(
         position.x + cosA * 0.5,
         position.y + 1.2 + (Math.random() - 0.5) * 0.5,
         position.z + sinA * 0.5 + (Math.random() - 0.5) * 0.3,
       );
-      spark.scale.setScalar(1);
-      (spark.material as THREE.MeshBasicMaterial).opacity = 1;
-      spark.userData.velocity = spark.userData.velocity || new THREE.Vector3();
-      spark.userData.velocity.set(
-        (Math.random() - 0.3) * 0.15 * cosA,
-        Math.random() * 0.12,
-        (Math.random() - 0.3) * 0.15 * sinA,
-      );
-      spark.userData.life = 1.0;
-      spark.userData.decay = 0.04 + Math.random() * 0.03;
+      spark.scaling.setAll(1);
+      spark.metadata = {
+        velocity: new Vector3(
+          (Math.random() - 0.3) * 0.15 * cosA,
+          Math.random() * 0.12,
+          (Math.random() - 0.3) * 0.15 * sinA,
+        ),
+        life: 1.0,
+        decay: 0.04 + Math.random() * 0.03,
+        mat,
+      };
       this.hitParticles.push(spark);
     }
   }
 
-  spawnBlockSpark(position: THREE.Vector3) {
+  spawnBlockSpark(position: Vector3) {
     const count = 4;
     for (let i = 0; i < count; i++) {
       const spark = this._getPooledSpark(this._blockMat);
@@ -801,35 +834,39 @@ export class Game {
         position.y + 1.2 + (Math.random() - 0.5) * 0.3,
         position.z + (Math.random() - 0.5) * 0.2,
       );
-      spark.scale.setScalar(0.7);
-      (spark.material as THREE.MeshBasicMaterial).opacity = 1;
-      spark.userData.velocity = spark.userData.velocity || new THREE.Vector3();
-      spark.userData.velocity.set(
-        (Math.random() - 0.5) * 0.1,
-        Math.random() * 0.08,
-        (Math.random() - 0.5) * 0.08,
-      );
-      spark.userData.life = 1.0;
-      spark.userData.decay = 0.06;
+      spark.scaling.setAll(0.7);
+      spark.metadata = {
+        velocity: new Vector3(
+          (Math.random() - 0.5) * 0.1,
+          Math.random() * 0.08,
+          (Math.random() - 0.5) * 0.08,
+        ),
+        life: 1.0,
+        decay: 0.06,
+        mat: this._blockMat,
+      };
       this.hitParticles.push(spark);
     }
   }
 
-  updateHitParticles(_deltaTime: number) {
+  updateHitParticles() {
     for (let i = this.hitParticles.length - 1; i >= 0; i--) {
       const p = this.hitParticles[i];
       if (!p) continue;
-      const d = p.userData;
+      const d = p.metadata as {
+        velocity: Vector3;
+        life: number;
+        decay: number;
+        mat: StandardMaterial;
+      };
       d.life -= d.decay;
       d.velocity.y -= 0.005;
-      p.position.x += d.velocity.x;
-      p.position.y += d.velocity.y;
-      p.position.z += d.velocity.z;
-      (p.material as THREE.MeshBasicMaterial).opacity = d.life;
-      p.scale.setScalar(d.life);
+      p.position.addInPlace(d.velocity);
+      d.mat.alpha = d.life;
+      p.scaling.setAll(d.life);
 
       if (d.life <= 0) {
-        p.visible = false;
+        p.setEnabled(false);
         this._sparkPool.push(p);
         this.hitParticles.splice(i, 1);
       }
@@ -844,8 +881,8 @@ export class Game {
     const f1 = this.fighters[0];
     const f2 = this.fighters[1];
 
-    if (f1) f1.updateVisuals(deltaTime);
-    if (f2) f2.updateVisuals(deltaTime);
+    if (f1) f1.updateVisuals();
+    if (f2) f2.updateVisuals();
 
     if (f1 && f2) {
       this.fightCamera.update(f1.position, f2.position, deltaTime, this.localPlayerIndex);
@@ -853,19 +890,11 @@ export class Game {
 
     if (this.stage) this.stage.update(deltaTime);
 
-    this.updateHitParticles(deltaTime);
-
-    if (this.frame % 8 === 0) {
-      this.renderer.shadowMap.needsUpdate = true;
-    }
-
-    this.renderer.render(this.scene, this.camera);
+    this.updateHitParticles();
   }
 
   private _onResize() {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.engine.resize();
   }
 
   playBGM() {
