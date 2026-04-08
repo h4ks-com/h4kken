@@ -6,7 +6,11 @@
 import * as THREE from 'three';
 
 export class Stage {
-  constructor(scene) {
+  scene: THREE.Scene;
+  objects: THREE.Object3D[];
+  time: number;
+
+  constructor(scene: THREE.Scene) {
     this.scene = scene;
     this.objects = [];
     this.time = 0;
@@ -14,7 +18,6 @@ export class Stage {
   }
 
   build() {
-    // Main arena platform (raised slightly)
     const arenaRadius = 14;
     const platformGeo = new THREE.CylinderGeometry(arenaRadius, arenaRadius + 0.3, 0.6, 32);
     const platformMat = new THREE.MeshStandardMaterial({
@@ -28,7 +31,6 @@ export class Stage {
     this.scene.add(platform);
     this.objects.push(platform);
 
-    // Inner fighting area — darker polished stone
     const fightAreaGeo = new THREE.CylinderGeometry(10, 10, 0.08, 32);
     const fightAreaMat = new THREE.MeshStandardMaterial({
       color: 0x8b7355,
@@ -41,7 +43,6 @@ export class Stage {
     this.scene.add(fightArea);
     this.objects.push(fightArea);
 
-    // Center line
     const centerGeo = new THREE.PlaneGeometry(0.06, 6);
     const centerMat = new THREE.MeshBasicMaterial({
       color: 0xffd700, transparent: true, opacity: 0.5,
@@ -51,11 +52,10 @@ export class Stage {
     centerLine.position.y = 0.06;
     this.scene.add(centerLine);
 
-    // Fighting ring boundary — golden accent ring
     const ringGeo = new THREE.TorusGeometry(10, 0.08, 6, 32);
     const ringMat = new THREE.MeshStandardMaterial({
       color: 0xffd700, metalness: 0.8, roughness: 0.2,
-      emissive: 0xaa8800, emissiveIntensity: 0.3,
+      emissive: new THREE.Color(0xaa8800), emissiveIntensity: 0.3,
     });
     const ring = new THREE.Mesh(ringGeo, ringMat);
     ring.rotation.x = Math.PI / 2;
@@ -63,7 +63,6 @@ export class Stage {
     this.scene.add(ring);
     this.objects.push(ring);
 
-    // Outer edge ring
     const outerRingGeo = new THREE.TorusGeometry(arenaRadius, 0.12, 6, 32);
     const outerRingMat = new THREE.MeshStandardMaterial({
       color: 0x997744, metalness: 0.5, roughness: 0.4,
@@ -74,7 +73,6 @@ export class Stage {
     this.scene.add(outerRing);
     this.objects.push(outerRing);
 
-    // Ground plane beyond arena
     const groundGeo = new THREE.PlaneGeometry(200, 200);
     const groundMat = new THREE.MeshLambertMaterial({ color: 0x6b8f5e });
     const ground = new THREE.Mesh(groundGeo, groundMat);
@@ -83,7 +81,6 @@ export class Stage {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Decorative pillars with brazier lights
     const pillarAngles = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
     const pillarDist = arenaRadius + 1.5;
 
@@ -91,28 +88,24 @@ export class Stage {
       const px = Math.cos(angle) * pillarDist;
       const pz = Math.sin(angle) * pillarDist;
 
-      // Stone pillar base
       const baseGeo = new THREE.CylinderGeometry(0.45, 0.55, 0.8, 6);
       const baseMat = new THREE.MeshLambertMaterial({ color: 0x887766 });
       const base = new THREE.Mesh(baseGeo, baseMat);
       base.position.set(px, 0.1, pz);
       this.scene.add(base);
 
-      // Main column
       const colGeo = new THREE.CylinderGeometry(0.3, 0.35, 5, 6);
       const colMat = new THREE.MeshLambertMaterial({ color: 0x998877 });
       const col = new THREE.Mesh(colGeo, colMat);
       col.position.set(px, 3, pz);
       this.scene.add(col);
 
-      // Top cap
       const capGeo = new THREE.CylinderGeometry(0.5, 0.35, 0.4, 6);
       const capMat = new THREE.MeshLambertMaterial({ color: 0xaa9977 });
       const cap = new THREE.Mesh(capGeo, capMat);
       cap.position.set(px, 5.7, pz);
       this.scene.add(cap);
 
-      // Brazier flame
       const flame = new THREE.PointLight(i % 2 === 0 ? 0xff6622 : 0xff8844, 1.2, 18, 1.5);
       flame.position.set(px, 6.3, pz);
       flame.castShadow = false;
@@ -120,13 +113,9 @@ export class Stage {
       this.objects.push(flame);
     });
 
-    // Backdrop: mountains and trees
     this.createBackdrop();
-
-    // Lighting
     this.setupLighting();
 
-    // Sky dome — bright gradient
     const skyGeo = new THREE.SphereGeometry(90, 16, 16);
     const skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
@@ -163,21 +152,17 @@ export class Stage {
     const sky = new THREE.Mesh(skyGeo, skyMat);
     this.scene.add(sky);
 
-    // Subtle distant fog (doesn't darken fighters)
     this.scene.fog = new THREE.Fog(0x99ccee, 40, 90);
   }
 
   setupLighting() {
-    // Ambient + hemisphere gives a solid base; one directional for shadows
     const ambient = new THREE.AmbientLight(0xffffff, 0.8);
     this.scene.add(ambient);
 
-    // Hemisphere — natural sky+ground fill (replaces separate fill lights)
     const hemi = new THREE.HemisphereLight(0x88bbff, 0x445522, 0.7);
     hemi.position.set(0, 20, 0);
     this.scene.add(hemi);
 
-    // Sun key light — only shadow-casting light
     const sun = new THREE.DirectionalLight(0xfff5e0, 1.6);
     sun.position.set(8, 18, 10);
     sun.castShadow = true;
@@ -194,7 +179,6 @@ export class Stage {
   }
 
   createBackdrop() {
-    // Distant mountains
     const mountainDefs = [
       { x: -45, z: -55, h: 22, r: 14, c: 0x667766 },
       { x: -25, z: -60, h: 30, r: 18, c: 0x5a6b5a },
@@ -214,7 +198,6 @@ export class Stage {
       this.scene.add(mesh);
     });
 
-    // Snow caps on taller mountains
     mountainDefs.filter(m => m.h > 25).forEach(m => {
       const capGeo = new THREE.ConeGeometry(m.r * 0.35, m.h * 0.2, 5);
       const capMat = new THREE.MeshLambertMaterial({ color: 0xdde8dd, flatShading: true });
@@ -224,7 +207,6 @@ export class Stage {
       this.scene.add(cap);
     });
 
-    // Trees around the arena (use shared geometries & materials to reduce draw calls)
     const treeCount = 14;
     const trunkMat = new THREE.MeshLambertMaterial({ color: 0x664422 });
     const leafMats = [
@@ -240,13 +222,11 @@ export class Stage {
       const tz = Math.sin(angle) * dist;
       const s = 0.7 + Math.random() * 0.8;
 
-      // Trunk
       const trunkGeo = new THREE.CylinderGeometry(0.15 * s, 0.25 * s, 3 * s, 5);
       const trunk = new THREE.Mesh(trunkGeo, trunkMat);
       trunk.position.set(tx, 1.5 * s - 0.6, tz);
       this.scene.add(trunk);
 
-      // Foliage layers
       for (let j = 0; j < 3; j++) {
         const r = (2.2 - j * 0.5) * s;
         const h = (2.0 - j * 0.3) * s;
@@ -260,14 +240,14 @@ export class Stage {
     }
   }
 
-  update(deltaTime) {
+  update(deltaTime: number) {
     this.time += deltaTime;
 
-    // Flicker brazier lights
     for (const obj of this.objects) {
-      if (obj.isPointLight) {
-        obj.intensity = 1.0 + Math.sin(this.time * 6 + obj.position.x) * 0.3
-                            + Math.sin(this.time * 9.7 + obj.position.z) * 0.15;
+      if ((obj as THREE.PointLight).isPointLight) {
+        const light = obj as THREE.PointLight;
+        light.intensity = 1.0 + Math.sin(this.time * 6 + obj.position.x) * 0.3
+                              + Math.sin(this.time * 9.7 + obj.position.z) * 0.15;
       }
     }
   }

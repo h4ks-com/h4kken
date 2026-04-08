@@ -3,6 +3,13 @@
 // ============================================================
 
 export class Network {
+  ws: WebSocket | null;
+  connected: boolean;
+  playerIndex: number;
+  opponentName: string;
+  roomId: string | null;
+  handlers: Record<string, Array<(data?: any) => void>>;
+
   constructor() {
     this.ws = null;
     this.connected = false;
@@ -12,22 +19,22 @@ export class Network {
     this.handlers = {};
   }
 
-  on(event, handler) {
+  on(event: string, handler: (data?: any) => void) {
     if (!this.handlers[event]) this.handlers[event] = [];
     this.handlers[event].push(handler);
   }
 
-  emit(event, data) {
+  emit(event: string, data?: any) {
     if (this.handlers[event]) {
       this.handlers[event].forEach(h => h(data));
     }
   }
 
   connect() {
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = `${protocol}//${window.location.host}`;
-      
+      const url = `${protocol}//${window.location.host}/ws`;
+
       this.ws = new WebSocket(url);
 
       this.ws.onopen = () => {
@@ -51,7 +58,7 @@ export class Network {
     });
   }
 
-  handleMessage(msg) {
+  handleMessage(msg: any) {
     switch (msg.type) {
       case 'waiting':
         this.emit('waiting');
@@ -86,25 +93,25 @@ export class Network {
     }
   }
 
-  send(msg) {
+  send(msg: any) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
     }
   }
 
-  joinMatch(name) {
+  joinMatch(name: string) {
     this.send({ type: 'join', name });
   }
 
-  sendInput(frame, input) {
+  sendInput(frame: number, input: any) {
     this.send({ type: 'input', frame, input });
   }
 
-  sendGameState(frame, state) {
+  sendGameState(frame: number, state: any) {
     this.send({ type: 'gameState', frame, state });
   }
 
-  sendRoundResult(winner, p1Wins, p2Wins, matchOver) {
+  sendRoundResult(winner: number, p1Wins: number, p2Wins: number, matchOver: boolean) {
     this.send({ type: 'roundResult', winner, p1Wins, p2Wins, matchOver });
   }
 

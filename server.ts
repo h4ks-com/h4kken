@@ -9,38 +9,53 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = createServer(app);
-const wss = new WebSocketServer({ server });
+// Vite proxies /ws in dev; in production the WS server listens on /ws directly
+const wss = new WebSocketServer({ server, path: '/ws' });
 
 const PORT = process.env.PORT || 3000;
 
-// Serve static files
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// In production __dirname = dist/, so client assets are in dist/client/
+app.use(express.static(path.join(__dirname, 'client')));
 
-// Debug endpoint - receives console logs from the browser
 app.post('/api/debug', (req, res) => {
   const lines = req.body.lines || [];
-  lines.forEach(l => console.log('[BROWSER]', l));
+  lines.forEach((l: string) => console.log('[BROWSER]', l));
   res.json({ ok: true });
 });
 
-// Game state
-const waitingPlayers = [];
-const rooms = new Map();
+interface PlayerInfo {
+  ws: import('ws').WebSocket;
+  name: string;
+  roomId: string | null;
+  playerIndex: number | null;
+}
+
+interface Room {
+  id: string;
+  players: [PlayerInfo, PlayerInfo];
+  frame: number;
+  inputs: [any, any];
+  state: 'countdown' | 'fighting' | 'roundEnd' | 'matchEnd';
+  countdownTimer: ReturnType<typeof setTimeout> | null;
+}
+
+const waitingPlayers: PlayerInfo[] = [];
+const rooms = new Map<string, Room>();
 let roomIdCounter = 1;
 
 function generateRoomId() {
   return `room_${roomIdCounter++}`;
 }
 
-function createRoom(player1, player2) {
+function createRoom(player1: PlayerInfo, player2: PlayerInfo): Room {
   const roomId = generateRoomId();
-  const room = {
+  const room: Room = {
     id: roomId,
     players: [player1, player2],
     frame: 0,
     inputs: [null, null],
-    state: 'countdown', // countdown, fighting, roundEnd, matchEnd
+    state: 'countdown',
     countdownTimer: null,
   };
   rooms.set(roomId, room);
@@ -51,35 +66,35 @@ function createRoom(player1, player2) {
   return room;
 }
 
-function destroyRoom(roomId) {
+function destroyRoom(roomId: string) {
   const room = rooms.get(roomId);
   if (!room) return;
-  
+
   room.players.forEach(p => {
     if (p && p.ws && p.ws.readyState === 1) {
       p.roomId = null;
       p.playerIndex = null;
     }
   });
-  
+
   if (room.countdownTimer) clearTimeout(room.countdownTimer);
   rooms.delete(roomId);
 }
 
-function sendTo(playerInfo, message) {
+function sendTo(playerInfo: PlayerInfo, message: object) {
   if (playerInfo && playerInfo.ws && playerInfo.ws.readyState === 1) {
     playerInfo.ws.send(JSON.stringify(message));
   }
 }
 
-function broadcastToRoom(room, message) {
+function broadcastToRoom(room: Room, message: object) {
   room.players.forEach(p => sendTo(p, message));
 }
 
-function startCountdown(room) {
+function startCountdown(room: Room) {
   room.state = 'countdown';
   let count = 3;
-  
+
   function tick() {
     broadcastToRoom(room, { type: 'countdown', count });
     if (count <= 0) {
@@ -95,7 +110,7 @@ function startCountdown(room) {
 }
 
 wss.on('connection', (ws) => {
-  const playerInfo = {
+  const playerInfo: PlayerInfo = {
     ws,
     name: 'Player',
     roomId: null,
@@ -103,24 +118,22 @@ wss.on('connection', (ws) => {
   };
 
   ws.on('message', (data) => {
-    let msg;
+    let msg: any;
     try {
-      msg = JSON.parse(data);
-    } catch (e) {
+      msg = JSON.parse(data.toString());
+    } catch {
       return;
     }
 
     switch (msg.type) {
       case 'join': {
         playerInfo.name = msg.name || 'Player';
-        
-        // Check if already in a room
+
         if (playerInfo.roomId) {
           sendTo(playerInfo, { type: 'error', message: 'Already in a match' });
           return;
         }
 
-        // Try to match with a waiting player
         const idx = waitingPlayers.findIndex(
           p => p.ws !== ws && p.ws.readyState === 1
         );
@@ -142,7 +155,6 @@ wss.on('connection', (ws) => {
             roomId: room.id,
           });
 
-          // Start countdown
           setTimeout(() => startCountdown(room), 1000);
         } else {
           waitingPlayers.push(playerInfo);
@@ -156,10 +168,9 @@ wss.on('connection', (ws) => {
         const room = rooms.get(playerInfo.roomId);
         if (!room || room.state !== 'fighting') return;
 
-        // Relay input to opponent
         const opponentIdx = playerInfo.playerIndex === 0 ? 1 : 0;
         const opponent = room.players[opponentIdx];
-        
+
         sendTo(opponent, {
           type: 'opponentInput',
           frame: msg.frame,
@@ -169,7 +180,6 @@ wss.on('connection', (ws) => {
       }
 
       case 'gameState': {
-        // Player 1 is authoritative - relay state to player 2
         if (!playerInfo.roomId || playerInfo.playerIndex !== 0) return;
         const room = rooms.get(playerInfo.roomId);
         if (!room) return;
@@ -188,12 +198,9 @@ wss.on('connection', (ws) => {
         const room = rooms.get(playerInfo.roomId);
         if (!room) return;
 
-        // Only accept roundResult while in 'fighting' state
-        // (prevents duplicate countdowns from both players sending roundResult)
         if (room.state !== 'fighting') break;
         room.state = 'roundEnd';
 
-        // Relay round result
         broadcastToRoom(room, {
           type: 'roundResult',
           winner: msg.winner,
@@ -205,7 +212,6 @@ wss.on('connection', (ws) => {
           room.state = 'matchEnd';
           setTimeout(() => destroyRoom(room.id), 5000);
         } else {
-          // Start next round countdown after delay
           setTimeout(() => startCountdown(room), 3000);
         }
         break;
@@ -220,7 +226,6 @@ wss.on('connection', (ws) => {
             destroyRoom(room.id);
           }
         }
-        // Remove from waiting list
         const waitIdx = waitingPlayers.indexOf(playerInfo);
         if (waitIdx >= 0) waitingPlayers.splice(waitIdx, 1);
         break;
@@ -229,11 +234,9 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    // Remove from waiting list
     const waitIdx = waitingPlayers.indexOf(playerInfo);
     if (waitIdx >= 0) waitingPlayers.splice(waitIdx, 1);
 
-    // Handle disconnect from room
     if (playerInfo.roomId) {
       const room = rooms.get(playerInfo.roomId);
       if (room) {

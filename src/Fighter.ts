@@ -3,16 +3,15 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
-import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import {
-  FIGHTER_STATE, GAME_CONSTANTS, CombatSystem, MOVES, HIT_RESULT, LEVEL
-} from './Combat.js';
+  FIGHTER_STATE, GAME_CONSTANTS, CombatSystem, MOVES, HIT_RESULT
+} from './Combat';
 
 const GC = GAME_CONSTANTS;
 
-// Animation file mapping
-const ANIM_FILES = {
+const ANIM_FILES: Record<string, string> = {
   idle:         'Arnold_Idle.fbx',
   combatIdle:   'Arnold_Combat_Idle.fbx',
   crouchIdle:   'Arnold_Crouch_Idle.fbx',
@@ -38,11 +37,51 @@ const ANIM_FILES = {
 };
 
 export class Fighter {
-  constructor(playerIndex, scene) {
+  playerIndex: number;
+  scene: THREE.Scene;
+  model: THREE.Object3D | null;
+  mixer: THREE.AnimationMixer | null;
+  animations: Record<string, THREE.AnimationClip>;
+  actions: Record<string, THREE.AnimationAction>;
+  currentAction: THREE.AnimationAction | null;
+  skeleton: any;
+  state: string;
+  previousState: string;
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  facing: number;
+  facingAngle: number;
+  health: number;
+  maxHealth: number;
+  currentMove: any;
+  moveFrame: number;
+  hasHitThisMove: boolean;
+  isBlocking: boolean;
+  isCrouching: boolean;
+  isGrounded: boolean;
+  comboCount: number;
+  comboDamage: number;
+  comboTimer: number;
+  stunFrames: number;
+  wins: number;
+  knockdownTimer: number;
+  getupTimer: number;
+  sideStepDir: number;
+  sideStepTimer: number;
+  dashTimer: number;
+  isRunning: boolean;
+  runFrames: number;
+  landingTimer: number;
+  hitFlash: number;
+  _cachedMaterials: THREE.Material[] | null;
+  rootBone: THREE.Bone | null;
+  rootBoneBindX: number;
+  rootBoneBindZ: number;
+
+  constructor(playerIndex: number, scene: THREE.Scene) {
     this.playerIndex = playerIndex;
     this.scene = scene;
 
-    // Visual
     this.model = null;
     this.mixer = null;
     this.animations = {};
@@ -50,21 +89,15 @@ export class Fighter {
     this.currentAction = null;
     this.skeleton = null;
 
-    // State
     this.state = FIGHTER_STATE.IDLE;
     this.previousState = FIGHTER_STATE.IDLE;
     this.position = new THREE.Vector3(playerIndex === 0 ? -3 : 3, 0, 0);
     this.velocity = new THREE.Vector3(0, 0, 0);
-    // facing is always 1 for both players: right key = forward (toward opponent).
-    // The camera always shows the local player on the left, so right=forward
-    // is the correct screen-space mapping for everyone.
     this.facing = 1;
-    // Fight-axis angle: radians from +X axis toward opponent in world XZ plane
     this.facingAngle = playerIndex === 0 ? 0 : Math.PI;
     this.health = GC.MAX_HEALTH;
     this.maxHealth = GC.MAX_HEALTH;
 
-    // Combat
     this.currentMove = null;
     this.moveFrame = 0;
     this.hasHitThisMove = false;
@@ -77,37 +110,27 @@ export class Fighter {
     this.stunFrames = 0;
     this.wins = 0;
 
-    // Getup / knockdown
     this.knockdownTimer = 0;
     this.getupTimer = 0;
 
-    // Sidestep
     this.sideStepDir = 0;
     this.sideStepTimer = 0;
 
-    // Dash
     this.dashTimer = 0;
     this.isRunning = false;
     this.runFrames = 0;
 
-    // Landing
     this.landingTimer = 0;
 
-    // Hit effect
     this.hitFlash = 0;
-    this._cachedMaterials = null; // cached for fast hit-flash updates
+    this._cachedMaterials = null;
 
-    // Root bone reference (for root motion constraint)
     this.rootBone = null;
     this.rootBoneBindX = 0;
     this.rootBoneBindZ = 0;
   }
 
-  /**
-   * Retarget animation clip track names to match the target model's node hierarchy.
-   * FBX animation files may use different path prefixes for the same bones.
-   */
-  static retargetClip(clip, validNodeNames) {
+  static retargetClip(clip: THREE.AnimationClip, validNodeNames: Set<string>) {
     for (const track of clip.tracks) {
       const propMatch = track.name.match(
         /\.(position|quaternion|scale|morphTargetInfluences|visible)(\[.*\])?$/
@@ -132,7 +155,7 @@ export class Fighter {
 
       if (!matched && parts.length > 1) {
         const last = parts[parts.length - 1];
-        if (validNodeNames.has(last)) {
+        if (last !== undefined && validNodeNames.has(last)) {
           track.name = last + propPart;
         }
       }
@@ -140,102 +163,84 @@ export class Fighter {
     return clip;
   }
 
-  /**
-   * Trim a clip to the region where actual motion occurs.
-   * Many AnimPack FBX files store the real animation in the last ~1-3 seconds
-   * with the rest being a static held pose.
-   * @param {THREE.AnimationClip} clip
-   * @param {number} [padBefore=0.1] extra seconds before detected motion start
-   * @returns {THREE.AnimationClip} new trimmed clip
-   */
-  static trimClip(clip, padBefore = 0.1) {
-    const threshold = 0.005; // minimum rotation-velocity to count as motion
+  static trimClip(clip: THREE.AnimationClip, padBefore = 0.1) {
+    const threshold = 0.005;
 
-    // 1. Find earliest time across ALL quaternion tracks (excluding root/pelvis)
-    //    where meaningful rotation change occurs
     let firstMotion = clip.duration;
     let lastMotion = 0;
 
     for (const track of clip.tracks) {
       if (!track.name.includes('.quaternion')) continue;
-      // Skip root/pelvis to avoid detecting subtle sway as "motion"
       if (track.name.startsWith('root.') || track.name.startsWith('pelvis.')) continue;
 
       const times = track.times;
       const vals = track.values;
-      const stride = 4; // quaternion
+      const stride = 4;
       for (let i = 1; i < times.length; i++) {
-        const dt = times[i] - times[i - 1];
+        const dt = times[i]! - times[i - 1]!;
         if (dt <= 0) continue;
         let diff = 0;
         for (let c = 0; c < stride; c++) {
-          const d = vals[i * stride + c] - vals[(i - 1) * stride + c];
+          const d = vals[i * stride + c]! - vals[(i - 1) * stride + c]!;
           diff += d * d;
         }
         const vel = Math.sqrt(diff) / dt;
         if (vel > threshold) {
-          if (times[i - 1] < firstMotion) firstMotion = times[i - 1];
-          if (times[i] > lastMotion) lastMotion = times[i];
+          if (times[i - 1]! < firstMotion) firstMotion = times[i - 1]!;
+          if (times[i]! > lastMotion) lastMotion = times[i]!;
         }
       }
     }
 
-    // If no significant motion found, or dead section is trivial (< 0.15 s), keep as is
     if (firstMotion >= lastMotion || firstMotion < 0.15) return clip;
 
     const trimStart = Math.max(0, firstMotion - padBefore);
-    const trimEnd = clip.duration; // keep to end
+    const trimEnd = clip.duration;
 
-    // 2. Build new tracks trimmed to [trimStart, trimEnd], re-based to time 0
-    const newTracks = [];
+    const newTracks: THREE.KeyframeTrack[] = [];
     for (const track of clip.tracks) {
       const times = track.times;
       const vals = track.values;
       const valSize = vals.length / times.length;
 
-      // Find index range that overlaps [trimStart, trimEnd]
       let iStart = 0;
-      while (iStart < times.length - 1 && times[iStart + 1] < trimStart) iStart++;
+      while (iStart < times.length - 1 && times[iStart + 1]! < trimStart) iStart++;
       let iEnd = times.length - 1;
-      while (iEnd > 0 && times[iEnd - 1] > trimEnd) iEnd--;
+      while (iEnd > 0 && times[iEnd - 1]! > trimEnd) iEnd--;
 
       const count = iEnd - iStart + 1;
       if (count < 2) {
-        // Keep at least 2 keyframes (start/end with same value)
         const newTimes = new Float32Array([0, trimEnd - trimStart]);
         const newVals = new Float32Array(valSize * 2);
         for (let c = 0; c < valSize; c++) {
-          newVals[c] = vals[iStart * valSize + c];
-          newVals[valSize + c] = vals[iStart * valSize + c];
+          newVals[c] = vals[iStart * valSize + c]!;
+          newVals[valSize + c] = vals[iStart * valSize + c]!;
         }
-        newTracks.push(new THREE.KeyframeTrack(track.name, newTimes, newVals));
+        newTracks.push(new THREE.KeyframeTrack(track.name, Array.from(newTimes), Array.from(newVals)));
         continue;
       }
 
       const newTimes = new Float32Array(count);
       const newVals = new Float32Array(count * valSize);
       for (let i = 0; i < count; i++) {
-        newTimes[i] = times[iStart + i] - trimStart;
+        newTimes[i] = times[iStart + i]! - trimStart;
         for (let c = 0; c < valSize; c++) {
-          newVals[i * valSize + c] = vals[(iStart + i) * valSize + c];
+          newVals[i * valSize + c] = vals[(iStart + i) * valSize + c]!;
         }
       }
-      // Ensure first keyframe is at time 0
-      if (newTimes[0] > 0) newTimes[0] = 0;
+      if (newTimes[0]! > 0) newTimes[0] = 0;
 
-      newTracks.push(new THREE.KeyframeTrack(track.name, newTimes, newVals));
+      newTracks.push(new THREE.KeyframeTrack(track.name, Array.from(newTimes), Array.from(newVals)));
     }
 
-    const trimmedClip = new THREE.AnimationClip(clip.name, trimEnd - trimStart, newTracks);
-    return trimmedClip;
+    return new THREE.AnimationClip(clip.name, trimEnd - trimStart, newTracks);
   }
 
-  // Load the base model and all animations
-  static async loadAssets(onProgress) {
+  static async loadAssets(onProgress?: (p: number) => void) {
     const loader = new FBXLoader();
     const basePath = 'assets/models/';
     const texturePath = 'assets/textures/BaseColor.png';
-    
+
     const totalFiles = Object.keys(ANIM_FILES).length + 1;
     let loaded = 0;
 
@@ -244,30 +249,27 @@ export class Fighter {
       if (onProgress) onProgress(loaded / totalFiles);
     };
 
-    // Load base model
     const baseModel = await loader.loadAsync(basePath + 'Arnold.fbx');
     report();
 
-    // Collect all node names from the base model for animation retargeting
-    const validNodeNames = new Set();
+    const validNodeNames = new Set<string>();
     baseModel.traverse(node => {
       if (node.name) validNodeNames.add(node.name);
     });
     console.log('[H4KKEN] Base model nodes:', [...validNodeNames]);
 
-    // Load texture
     const textureLoader = new THREE.TextureLoader();
     const texture = await textureLoader.loadAsync(texturePath);
     texture.colorSpace = THREE.SRGBColorSpace;
 
-    // Apply texture to model
     baseModel.traverse(child => {
-      if (child.isMesh) {
+      if ((child as THREE.Mesh).isMesh) {
         child.castShadow = true;
         child.receiveShadow = true;
-        if (child.material) {
-          const materials = Array.isArray(child.material) ? child.material : [child.material];
-          materials.forEach(mat => {
+        const mesh = child as THREE.Mesh;
+        if (mesh.material) {
+          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          materials.forEach((mat: any) => {
             mat.map = texture;
             mat.needsUpdate = true;
           });
@@ -275,10 +277,9 @@ export class Fighter {
       }
     });
 
-    // Load all animations
-    const animClips = {};
+    const animClips: Record<string, THREE.AnimationClip> = {};
     const animEntries = Object.entries(ANIM_FILES);
-    
+
     for (let i = 0; i < animEntries.length; i += 4) {
       const batch = animEntries.slice(i, i + 4);
       const results = await Promise.all(
@@ -292,13 +293,11 @@ export class Fighter {
       results.forEach(({ name, fbx }) => {
         if (fbx.animations && fbx.animations.length > 0) {
           let clip = fbx.animations[0];
+          if (!clip) return;
           clip.name = name;
 
-          // Retarget track names to match the base model's skeleton
           Fighter.retargetClip(clip, validNodeNames);
 
-          // Trim clip to active motion range (AnimPack FBX files often
-          // pack the real animation in the last ~1s of a 30s timeline)
           const origDur = clip.duration;
           clip = Fighter.trimClip(clip);
 
@@ -312,30 +311,16 @@ export class Fighter {
       });
     }
 
-    // Generate procedural kick animations (no kick FBX in asset pack)
     Fighter.createProceduralKicks(baseModel, animClips);
 
     return { baseModel, animClips, texture };
   }
 
-  /**
-   * Build procedural kick AnimationClips by sampling combat-idle first frame
-   * as the base pose and layering leg rotations on the correct local-space axes.
-   *
-   * Bone analysis (from animation data) shows:
-   *   - thigh_r/l forward kick is primarily Z-axis rotation in local space
-   *   - calf straighten/bend is primarily Z-axis rotation in local space
-   *   - spine lean is Z-axis rotation (+Z = lean back, -Z = lean forward)
-   *   - UE4 right-side thigh has Z≈180° in T-pose, so axes are mirrored vs left
-   *
-   * Creates: kickRight, kickLeft, lowKick, sweepKick
-   */
-  static createProceduralKicks(baseModel, animClips) {
-    // 1. Extract first-frame quaternions & positions from combat idle clip
-    //    This gives us the fighting-stance as our base pose (not T-pose)
+  static createProceduralKicks(baseModel: THREE.Object3D, animClips: Record<string, THREE.AnimationClip>) {
     const idleClip = animClips['combatIdle'];
-    const idlePose = {};  // boneName → Quaternion
-    const idlePos  = {};  // boneName → Vector3
+    if (!idleClip) return;
+    const idlePose: Record<string, THREE.Quaternion> = {};
+    const idlePos: Record<string, THREE.Vector3> = {};
 
     for (const track of idleClip.tracks) {
       const dotIdx = track.name.lastIndexOf('.');
@@ -353,48 +338,34 @@ export class Fighter {
       }
     }
 
-    // Forward-kick rotation axes in bone-local space (derived from jump animation delta analysis)
-    // thigh_r: +angle = forward kick,  thigh_l: +angle = forward kick
     const THIGH_R_FWD = new THREE.Vector3( 0.017, -0.322,  0.940).normalize();
     const THIGH_L_FWD = new THREE.Vector3( 0.039,  0.583, -0.808).normalize();
-    // Calf extension axis (straighten knee): +angle = extend
     const CALF_R_EXT  = new THREE.Vector3(-0.576, -0.287,  0.749).normalize();
-    const CALF_L_EXT  = new THREE.Vector3( 0.576, -0.287,  0.749).normalize(); // mirrored
+    const CALF_L_EXT  = new THREE.Vector3( 0.576, -0.287,  0.749).normalize();
 
-    // Helper: compute quaternion by applying an axis-angle offset to a base pose
-    function offsetQ(boneName, axis, angle) {
+    function offsetQ(boneName: string, axis: THREE.Vector3, angle: number) {
       const base = idlePose[boneName];
       if (!base) return new THREE.Quaternion();
       const off = new THREE.Quaternion().setFromAxisAngle(axis, angle);
       return base.clone().multiply(off);
     }
 
-    // Helper: apply Euler offset (for non-critical bones like spine/foot)
-    function eulerOffsetQ(boneName, rx, ry, rz) {
+    function eulerOffsetQ(boneName: string, rx: number, ry: number, rz: number) {
       const base = idlePose[boneName];
       if (!base) return new THREE.Quaternion();
       const off = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx || 0, ry || 0, rz || 0));
       return base.clone().multiply(off);
     }
 
-    /**
-     * Build a complete kick animation clip.
-     * ALL bones in the idle pose get a track (so arms/spine hold fighting stance).
-     * Animated bones override their idle values with keyframed motion.
-     *
-     * @param {string} name - clip name
-     * @param {number} duration - clip duration in seconds
-     * @param {Object} boneAnims - { boneName: [{ t, q: THREE.Quaternion }, ...], '_pelvisShift': [...] }
-     */
-    function buildKickClip(name, duration, boneAnims) {
-      const tracks = [];
+    function buildKickClip(name: string, duration: number, boneAnims: Record<string, any[]>) {
+      const tracks: THREE.KeyframeTrack[] = [];
       const animBones = new Set(Object.keys(boneAnims).filter(k => !k.startsWith('_')));
 
-      // Quaternion tracks for every bone
       for (const [boneName, q] of Object.entries(idlePose)) {
         if (animBones.has(boneName)) {
           const kfs = boneAnims[boneName];
-          const times  = new Float32Array(kfs.map(kf => kf.t));
+          if (!kfs) continue;
+          const times  = new Float32Array(kfs.map((kf: any) => kf.t));
           const values = new Float32Array(kfs.length * 4);
           for (let i = 0; i < kfs.length; i++) {
             const qv = kfs[i].q;
@@ -404,23 +375,21 @@ export class Fighter {
             values[i * 4 + 3] = qv.w;
           }
           tracks.push(new THREE.QuaternionKeyframeTrack(
-            `${boneName}.quaternion`, times, values
+            `${boneName}.quaternion`, Array.from(times), Array.from(values)
           ));
         } else {
-          // Hold idle pose for duration
           tracks.push(new THREE.QuaternionKeyframeTrack(
             `${boneName}.quaternion`,
-            new Float32Array([0, duration]),
-            new Float32Array([q.x, q.y, q.z, q.w, q.x, q.y, q.z, q.w])
+            [0, duration],
+            [q.x, q.y, q.z, q.w, q.x, q.y, q.z, q.w]
           ));
         }
       }
 
-      // Position tracks for every bone
       for (const [boneName, pos] of Object.entries(idlePos)) {
         if (boneAnims['_pelvisShift'] && boneName === 'pelvis') {
           const pk = boneAnims['_pelvisShift'];
-          const times  = new Float32Array(pk.map(kf => kf.t));
+          const times  = new Float32Array(pk.map((kf: any) => kf.t));
           const values = new Float32Array(pk.length * 3);
           for (let i = 0; i < pk.length; i++) {
             values[i * 3]     = pos.x + (pk[i].dx || 0);
@@ -428,13 +397,13 @@ export class Fighter {
             values[i * 3 + 2] = pos.z + (pk[i].dz || 0);
           }
           tracks.push(new THREE.VectorKeyframeTrack(
-            'pelvis.position', times, values
+            'pelvis.position', Array.from(times), Array.from(values)
           ));
         } else {
           tracks.push(new THREE.VectorKeyframeTrack(
             `${boneName}.position`,
-            new Float32Array([0, duration]),
-            new Float32Array([pos.x, pos.y, pos.z, pos.x, pos.y, pos.z])
+            [0, duration],
+            [pos.x, pos.y, pos.z, pos.x, pos.y, pos.z]
           ));
         }
       }
@@ -444,47 +413,43 @@ export class Fighter {
       return clip;
     }
 
-    // Shorthand: idle (no offset), axis-angle offset, Euler offset
-    const idle = (bone) => idlePose[bone] ? idlePose[bone].clone() : new THREE.Quaternion();
-    const aa   = (bone, axis, angle) => offsetQ(bone, axis, angle);
-    const eu   = (bone, rx, ry, rz)  => eulerOffsetQ(bone, rx, ry, rz);
+    const idle = (bone: string) => idlePose[bone] ? idlePose[bone].clone() : new THREE.Quaternion();
+    const aa   = (bone: string, axis: THREE.Vector3, angle: number) => offsetQ(bone, axis, angle);
+    const eu   = (bone: string, rx: number, ry: number, rz: number)  => eulerOffsetQ(bone, rx, ry, rz);
 
-    // ───────────────── Right Kick (fast mid kick, right leg) ─────────────────
     animClips['kickRight'] = buildKickClip('kickRight', 0.50, {
       'thigh_r': [
         { t: 0.00, q: idle('thigh_r') },
-        { t: 0.08, q: aa('thigh_r', THIGH_R_FWD, -0.25) },      // wind-up (pull back)
-        { t: 0.20, q: aa('thigh_r', THIGH_R_FWD,  1.35) },      // kick forward
-        { t: 0.35, q: aa('thigh_r', THIGH_R_FWD,  1.15) },      // hold
-        { t: 0.50, q: idle('thigh_r') },                          // return
+        { t: 0.08, q: aa('thigh_r', THIGH_R_FWD, -0.25) },
+        { t: 0.20, q: aa('thigh_r', THIGH_R_FWD,  1.35) },
+        { t: 0.35, q: aa('thigh_r', THIGH_R_FWD,  1.15) },
+        { t: 0.50, q: idle('thigh_r') },
       ],
       'calf_r': [
         { t: 0.00, q: idle('calf_r') },
-        { t: 0.08, q: aa('calf_r', CALF_R_EXT, -0.5) },         // knee bends during wind-up
-        { t: 0.20, q: aa('calf_r', CALF_R_EXT,  0.65) },        // leg extends on kick
-        { t: 0.35, q: aa('calf_r', CALF_R_EXT,  0.55) },        // hold extended
-        { t: 0.50, q: idle('calf_r') },                           // return
+        { t: 0.08, q: aa('calf_r', CALF_R_EXT, -0.5) },
+        { t: 0.20, q: aa('calf_r', CALF_R_EXT,  0.65) },
+        { t: 0.35, q: aa('calf_r', CALF_R_EXT,  0.55) },
+        { t: 0.50, q: idle('calf_r') },
       ],
       'foot_r': [
         { t: 0.00, q: idle('foot_r') },
-        { t: 0.20, q: eu('foot_r', -0.3, 0, 0) },               // flex foot
+        { t: 0.20, q: eu('foot_r', -0.3, 0, 0) },
         { t: 0.50, q: idle('foot_r') },
       ],
-      // Lean back slightly during kick
       'spine_01': [
         { t: 0.00, q: idle('spine_01') },
-        { t: 0.15, q: eu('spine_01', 0, 0, 0.15) },             // lean back
+        { t: 0.15, q: eu('spine_01', 0, 0, 0.15) },
         { t: 0.50, q: idle('spine_01') },
       ],
-      // Support leg bends slightly
       'thigh_l': [
         { t: 0.00, q: idle('thigh_l') },
-        { t: 0.15, q: aa('thigh_l', THIGH_L_FWD, -0.10) },      // slight support bend
+        { t: 0.15, q: aa('thigh_l', THIGH_L_FWD, -0.10) },
         { t: 0.50, q: idle('thigh_l') },
       ],
       'calf_l': [
         { t: 0.00, q: idle('calf_l') },
-        { t: 0.15, q: aa('calf_l', CALF_L_EXT, -0.15) },        // slight knee bend
+        { t: 0.15, q: aa('calf_l', CALF_L_EXT, -0.15) },
         { t: 0.50, q: idle('calf_l') },
       ],
       '_pelvisShift': [
@@ -494,36 +459,34 @@ export class Fighter {
       ],
     });
 
-    // ───────────────── Left Kick (power mid kick, left leg) ─────────────────
     animClips['kickLeft'] = buildKickClip('kickLeft', 0.65, {
       'thigh_l': [
         { t: 0.00, q: idle('thigh_l') },
-        { t: 0.12, q: aa('thigh_l', THIGH_L_FWD, -0.30) },      // wind-up
-        { t: 0.30, q: aa('thigh_l', THIGH_L_FWD,  1.50) },      // powerful kick forward
-        { t: 0.45, q: aa('thigh_l', THIGH_L_FWD,  1.25) },      // follow through
+        { t: 0.12, q: aa('thigh_l', THIGH_L_FWD, -0.30) },
+        { t: 0.30, q: aa('thigh_l', THIGH_L_FWD,  1.50) },
+        { t: 0.45, q: aa('thigh_l', THIGH_L_FWD,  1.25) },
         { t: 0.65, q: idle('thigh_l') },
       ],
       'calf_l': [
         { t: 0.00, q: idle('calf_l') },
-        { t: 0.12, q: aa('calf_l', CALF_L_EXT, -0.50) },        // knee bends
-        { t: 0.30, q: aa('calf_l', CALF_L_EXT,  0.40) },        // extends
-        { t: 0.45, q: aa('calf_l', CALF_L_EXT,  0.30) },        // hold
+        { t: 0.12, q: aa('calf_l', CALF_L_EXT, -0.50) },
+        { t: 0.30, q: aa('calf_l', CALF_L_EXT,  0.40) },
+        { t: 0.45, q: aa('calf_l', CALF_L_EXT,  0.30) },
         { t: 0.65, q: idle('calf_l') },
       ],
       'foot_l': [
         { t: 0.00, q: idle('foot_l') },
-        { t: 0.30, q: eu('foot_l', -0.35, 0, 0) },              // flex foot
+        { t: 0.30, q: eu('foot_l', -0.35, 0, 0) },
         { t: 0.65, q: idle('foot_l') },
       ],
       'spine_01': [
         { t: 0.00, q: idle('spine_01') },
-        { t: 0.20, q: eu('spine_01', 0, 0, 0.18) },             // lean back
+        { t: 0.20, q: eu('spine_01', 0, 0, 0.18) },
         { t: 0.65, q: idle('spine_01') },
       ],
-      // Support leg bends
       'thigh_r': [
         { t: 0.00, q: idle('thigh_r') },
-        { t: 0.20, q: aa('thigh_r', THIGH_R_FWD, -0.12) },      // brace
+        { t: 0.20, q: aa('thigh_r', THIGH_R_FWD, -0.12) },
         { t: 0.65, q: idle('thigh_r') },
       ],
       '_pelvisShift': [
@@ -533,28 +496,25 @@ export class Fighter {
       ],
     });
 
-    // ───────────────── Low Kick (quick low right leg) ─────────────────
-    //   Kick goes low and slightly outward; body drops down
-    const LOW_KICK_DIR = new THREE.Vector3(0.05, -0.55, 0.83).normalize(); // forward + outward
+    const LOW_KICK_DIR = new THREE.Vector3(0.05, -0.55, 0.83).normalize();
     animClips['lowKick'] = buildKickClip('lowKick', 0.45, {
       'thigh_r': [
         { t: 0.00, q: idle('thigh_r') },
-        { t: 0.10, q: aa('thigh_r', LOW_KICK_DIR,  0.45) },     // leg goes low/out
-        { t: 0.25, q: aa('thigh_r', LOW_KICK_DIR,  0.80) },     // extended low
+        { t: 0.10, q: aa('thigh_r', LOW_KICK_DIR,  0.45) },
+        { t: 0.25, q: aa('thigh_r', LOW_KICK_DIR,  0.80) },
         { t: 0.45, q: idle('thigh_r') },
       ],
       'calf_r': [
         { t: 0.00, q: idle('calf_r') },
-        { t: 0.10, q: aa('calf_r', CALF_R_EXT, -0.25) },        // slightly bent
-        { t: 0.25, q: aa('calf_r', CALF_R_EXT,  0.35) },        // extends
+        { t: 0.10, q: aa('calf_r', CALF_R_EXT, -0.25) },
+        { t: 0.25, q: aa('calf_r', CALF_R_EXT,  0.35) },
         { t: 0.45, q: idle('calf_r') },
       ],
       'spine_01': [
         { t: 0.00, q: idle('spine_01') },
-        { t: 0.15, q: eu('spine_01', 0, 0, -0.15) },            // lean forward for low kick
+        { t: 0.15, q: eu('spine_01', 0, 0, -0.15) },
         { t: 0.45, q: idle('spine_01') },
       ],
-      // Support leg bends deeper
       'thigh_l': [
         { t: 0.00, q: idle('thigh_l') },
         { t: 0.15, q: aa('thigh_l', THIGH_L_FWD,  0.20) },
@@ -572,40 +532,37 @@ export class Fighter {
       ],
     });
 
-    // ───────────────── Sweep Kick (round sweep, left leg) ─────────────────
-    //   Character drops low and sweeps left leg in a wide arc
-    const SWEEP_ARC = new THREE.Vector3(0.10, 0.75, -0.65).normalize(); // wide outward arc
+    const SWEEP_ARC = new THREE.Vector3(0.10, 0.75, -0.65).normalize();
     animClips['sweepKick'] = buildKickClip('sweepKick', 0.70, {
       'thigh_l': [
         { t: 0.00, q: idle('thigh_l') },
-        { t: 0.10, q: aa('thigh_l', THIGH_L_FWD,  0.30) },      // prep
-        { t: 0.25, q: aa('thigh_l', SWEEP_ARC,     0.90) },      // sweep out wide
-        { t: 0.45, q: aa('thigh_l', SWEEP_ARC,     0.70) },      // sweep through
+        { t: 0.10, q: aa('thigh_l', THIGH_L_FWD,  0.30) },
+        { t: 0.25, q: aa('thigh_l', SWEEP_ARC,     0.90) },
+        { t: 0.45, q: aa('thigh_l', SWEEP_ARC,     0.70) },
         { t: 0.70, q: idle('thigh_l') },
       ],
       'calf_l': [
         { t: 0.00, q: idle('calf_l') },
-        { t: 0.25, q: aa('calf_l', CALF_L_EXT,  0.30) },        // extended
+        { t: 0.25, q: aa('calf_l', CALF_L_EXT,  0.30) },
         { t: 0.45, q: aa('calf_l', CALF_L_EXT,  0.20) },
         { t: 0.70, q: idle('calf_l') },
       ],
       'spine_01': [
         { t: 0.00, q: idle('spine_01') },
-        { t: 0.15, q: eu('spine_01', 0, 0, -0.25) },            // lean forward for sweep
-        { t: 0.45, q: eu('spine_01', 0, 0, -0.25) },            // stay leaning
+        { t: 0.15, q: eu('spine_01', 0, 0, -0.25) },
+        { t: 0.45, q: eu('spine_01', 0, 0, -0.25) },
         { t: 0.70, q: idle('spine_01') },
       ],
-      // Support leg bends deep for sweep crouch
       'thigh_r': [
         { t: 0.00, q: idle('thigh_r') },
-        { t: 0.15, q: aa('thigh_r', THIGH_R_FWD,  0.40) },      // deep crouch
-        { t: 0.45, q: aa('thigh_r', THIGH_R_FWD,  0.40) },      // hold
+        { t: 0.15, q: aa('thigh_r', THIGH_R_FWD,  0.40) },
+        { t: 0.45, q: aa('thigh_r', THIGH_R_FWD,  0.40) },
         { t: 0.70, q: idle('thigh_r') },
       ],
       'calf_r': [
         { t: 0.00, q: idle('calf_r') },
-        { t: 0.15, q: aa('calf_r', CALF_R_EXT, -0.50) },        // deep bend
-        { t: 0.45, q: aa('calf_r', CALF_R_EXT, -0.50) },        // hold
+        { t: 0.15, q: aa('calf_r', CALF_R_EXT, -0.50) },
+        { t: 0.45, q: aa('calf_r', CALF_R_EXT, -0.50) },
         { t: 0.70, q: idle('calf_r') },
       ],
       '_pelvisShift': [
@@ -617,58 +574,52 @@ export class Fighter {
     });
   }
 
-  init(baseModel, animClips, texture) {
-    // Clone the model properly (handles SkinnedMesh + Skeleton)
-    this.model = SkeletonUtils.clone(baseModel);
-    
-    // Scale model
-    this.model.scale.set(0.013, 0.013, 0.013);
-    
-    // Position
-    this.model.position.copy(this.position);
-    this.model.rotation.y = this.facing > 0 ? Math.PI / 2 : -Math.PI / 2;
+  init(baseModel: THREE.Object3D, animClips: Record<string, THREE.AnimationClip>, texture: THREE.Texture) {
+    const model = skeletonClone(baseModel);
+    this.model = model;
 
-    // Apply unique tint for Player 2
+    model.scale.set(0.013, 0.013, 0.013);
+    model.position.copy(this.position);
+    (model as THREE.Object3D & { rotation: THREE.Euler }).rotation.y = this.facing > 0 ? Math.PI / 2 : -Math.PI / 2;
+
     if (this.playerIndex === 1) {
-      this.model.traverse(child => {
-        if (child.isMesh) {
-          // Clone materials to avoid sharing with P1
-          if (Array.isArray(child.material)) {
-            child.material = child.material.map(m => {
-              const cloned = m.clone();
+      model.traverse(child => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          if (Array.isArray(mesh.material)) {
+            mesh.material = mesh.material.map(m => {
+              const cloned = (m as THREE.MeshStandardMaterial).clone();
               cloned.color = new THREE.Color(0.6, 0.4, 0.4);
               cloned.emissive = new THREE.Color(0.15, 0.02, 0.02);
               return cloned;
             });
           } else {
-            child.material = child.material.clone();
-            child.material.color = new THREE.Color(0.6, 0.4, 0.4);
-            child.material.emissive = new THREE.Color(0.15, 0.02, 0.02);
+            mesh.material = (mesh.material as THREE.MeshStandardMaterial).clone();
+            (mesh.material as THREE.MeshStandardMaterial).color = new THREE.Color(0.6, 0.4, 0.4);
+            (mesh.material as THREE.MeshStandardMaterial).emissive = new THREE.Color(0.15, 0.02, 0.02);
           }
         }
       });
     }
 
-    // Find root bone and cache materials for fast per-frame access
     this.rootBone = null;
-    const matSet = new Set();
-    this.model.traverse(child => {
-      if (child.isBone && !this.rootBone) {
-        this.rootBone = child;
+    const matSet = new Set<THREE.Material>();
+    model.traverse(child => {
+      if ((child as THREE.Bone).isBone && !this.rootBone) {
+        this.rootBone = child as THREE.Bone;
         this.rootBoneBindX = child.position.x;
         this.rootBoneBindZ = child.position.z;
       }
-      if (child.isMesh) {
-        const mats = Array.isArray(child.material) ? child.material : [child.material];
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
         mats.forEach(m => matSet.add(m));
       }
     });
     this._cachedMaterials = [...matSet];
 
-    // Create animation mixer
-    this.mixer = new THREE.AnimationMixer(this.model);
+    this.mixer = new THREE.AnimationMixer(model);
 
-    // Animation categories
     const onceAnimations = new Set([
       'punch1', 'punch2', 'heavyPunch',
       'hurt1', 'hurt2',
@@ -677,7 +628,6 @@ export class Fighter {
       'kickRight', 'kickLeft', 'lowKick', 'sweepKick',
     ]);
 
-    // Register all animation clips
     for (const [name, clip] of Object.entries(animClips)) {
       this.animations[name] = clip;
       const action = this.mixer.clipAction(clip);
@@ -687,22 +637,19 @@ export class Fighter {
       action.setEffectiveWeight(0);
 
       if (onceAnimations.has(name)) {
-        action.setLoop(THREE.LoopOnce);
+        action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
       } else {
-        // Explicitly force looping for movement/idle animations
         action.setLoop(THREE.LoopRepeat, Infinity);
         action.clampWhenFinished = false;
       }
     }
 
-    this.scene.add(this.model);
-
-    // Play initial idle
+    this.scene.add(model);
     this.playAnimation('combatIdle', 0.2);
   }
 
-  playAnimation(name, crossfadeDuration = 0.15, speed = 1.0) {
+  playAnimation(name: string, crossfadeDuration = 0.15, speed = 1.0) {
     const newAction = this.actions[name];
     if (!newAction) return;
 
@@ -713,7 +660,6 @@ export class Fighter {
     newAction.setEffectiveWeight(1);
 
     if (this.currentAction && this.currentAction !== newAction) {
-      // Use fadeOut/fadeIn instead of crossFadeTo to avoid time-scale warping
       this.currentAction.fadeOut(crossfadeDuration);
       newAction.fadeIn(crossfadeDuration);
     }
@@ -722,7 +668,7 @@ export class Fighter {
     this.currentAction = newAction;
   }
 
-  reset(startX) {
+  reset(startX: number) {
     this.position.set(startX, 0, 0);
     this.velocity.set(0, 0, 0);
     this.health = GC.MAX_HEALTH;
@@ -745,24 +691,17 @@ export class Fighter {
     this.runFrames = 0;
     this.landingTimer = 0;
     this.hitFlash = 0;
-    // facing is always 1 (right=forward), facingAngle tracks world direction
     this.facing = 1;
     this.facingAngle = startX < 0 ? 0 : Math.PI;
 
     this.playAnimation('combatIdle', 0.3);
   }
 
-  // Process input and update fighter state
-  processInput(input, opponentPos) {
-    // Compute fight-axis angle: direction from this fighter to opponent in world XZ
+  processInput(input: any, opponentPos: THREE.Vector3) {
     const dxWorld = opponentPos.x - this.position.x;
     const dzWorld = opponentPos.z - this.position.z;
     const toOpponentAngle = Math.atan2(dzWorld, dxWorld);
 
-    // Update fight-axis angle (always track opponent, except mid-attack/stun)
-    // NOTE: this.facing is FIXED per player (P1=1, P2=-1) — it never changes.
-    // The camera always orbits so P2 is screen-right of P1, so the LEFT/RIGHT
-    // key mapping must stay constant regardless of world positions.
     const canUpdateFacing = this.state !== FIGHTER_STATE.ATTACKING &&
         this.state !== FIGHTER_STATE.HIT_STUN &&
         this.state !== FIGHTER_STATE.JUGGLE &&
@@ -771,10 +710,8 @@ export class Fighter {
       this.facingAngle = toOpponentAngle;
     }
 
-    // Get relative input (forward/back based on facing)
     const relInput = this.getRelativeInput(input);
 
-    // State machine
     switch (this.state) {
       case FIGHTER_STATE.IDLE:
       case FIGHTER_STATE.WALK_FORWARD:
@@ -821,11 +758,11 @@ export class Fighter {
         break;
       case FIGHTER_STATE.VICTORY:
       case FIGHTER_STATE.DEFEAT:
-        break; // No input handling
+        break;
     }
   }
 
-  getRelativeInput(input) {
+  getRelativeInput(input: any) {
     const rel = { ...input };
     if (this.facing > 0) {
       rel.forward = input.right;
@@ -838,7 +775,6 @@ export class Fighter {
       rel.forwardJust = input.leftJust;
       rel.backJust = input.rightJust;
     }
-    // Map dash direction
     if (this.facing > 0) {
       rel.dashForward = input.dashRight;
       rel.dashBack = input.dashLeft;
@@ -849,18 +785,16 @@ export class Fighter {
     return rel;
   }
 
-  handleStandingState(input) {
+  handleStandingState(input: any) {
     this.isCrouching = false;
     this.isBlocking = input.back;
 
-    // Try to attack
     const move = CombatSystem.resolveMove(input, this);
     if (move) {
       this.startAttack(move);
       return;
     }
 
-    // Jump
     if (input.upJust) {
       this.velocity.y = GC.JUMP_VELOCITY;
       if (input.forward) {
@@ -877,7 +811,6 @@ export class Fighter {
       return;
     }
 
-    // Crouch
     if (input.down) {
       this.state = FIGHTER_STATE.CROUCH;
       this.isCrouching = true;
@@ -885,7 +818,6 @@ export class Fighter {
       return;
     }
 
-    // Sidestep
     if (input.sideStepUp) {
       this.startSidestep(-1);
       return;
@@ -895,7 +827,6 @@ export class Fighter {
       return;
     }
 
-    // Dash back
     if (input.dashBack) {
       this.state = FIGHTER_STATE.DASH_BACK;
       this.dashTimer = GC.DASH_BACK_FRAMES;
@@ -904,7 +835,6 @@ export class Fighter {
       return;
     }
 
-    // Dash forward / Run
     if (input.dashForward) {
       this.state = FIGHTER_STATE.RUN;
       this.isRunning = true;
@@ -913,7 +843,6 @@ export class Fighter {
       return;
     }
 
-    // Walk
     if (input.forward) {
       this.velocity.x = GC.WALK_SPEED;
       this.state = FIGHTER_STATE.WALK_FORWARD;
@@ -931,11 +860,10 @@ export class Fighter {
     }
   }
 
-  handleCrouchState(input) {
+  handleCrouchState(input: any) {
     this.isCrouching = true;
     this.isBlocking = input.back;
 
-    // Stand up
     if (!input.down) {
       this.isCrouching = false;
       this.state = FIGHTER_STATE.IDLE;
@@ -943,14 +871,12 @@ export class Fighter {
       return;
     }
 
-    // Attack from crouch
     const move = CombatSystem.resolveMove(input, this);
     if (move) {
       this.startAttack(move);
       return;
     }
 
-    // Crouch walk
     if (input.forward) {
       this.velocity.x = GC.CROUCH_WALK_SPEED;
       if (this.state !== FIGHTER_STATE.CROUCH_WALK) {
@@ -972,11 +898,9 @@ export class Fighter {
     }
   }
 
-  handleAirState(input) {
-    // Apply gravity
+  handleAirState(_input: any) {
     this.velocity.y += GC.GRAVITY;
 
-    // Land
     if (this.position.y <= GC.GROUND_Y && this.velocity.y <= 0) {
       this.position.y = GC.GROUND_Y;
       this.velocity.y = 0;
@@ -988,11 +912,10 @@ export class Fighter {
     }
   }
 
-  handleRunState(input) {
+  handleRunState(input: any) {
     this.isBlocking = false;
     this.runFrames++;
 
-    // Attack from run
     if (input.lpJust || input.rpJust || input.lkJust || input.rkJust) {
       const move = CombatSystem.resolveMove(input, this);
       if (move) {
@@ -1002,7 +925,6 @@ export class Fighter {
       }
     }
 
-    // Stop running
     if (!input.forward || input.back) {
       this.isRunning = false;
       this.state = FIGHTER_STATE.IDLE;
@@ -1014,7 +936,7 @@ export class Fighter {
     this.velocity.x = GC.RUN_SPEED;
   }
 
-  handleAttackState(input) {
+  handleAttackState(input: any) {
     if (!this.currentMove) {
       this.state = FIGHTER_STATE.IDLE;
       this.playAnimation('combatIdle', 0.15);
@@ -1024,14 +946,12 @@ export class Fighter {
     this.moveFrame++;
     const totalFrames = this.currentMove.startupFrames + this.currentMove.activeFrames + this.currentMove.recoveryFrames;
 
-    // Forward lunge during startup (always toward opponent = positive velocity.x)
     if (this.currentMove.forwardLunge && this.moveFrame <= this.currentMove.startupFrames) {
       this.velocity.x = this.currentMove.forwardLunge;
     } else if (this.moveFrame > this.currentMove.startupFrames + this.currentMove.activeFrames) {
       this.velocity.x *= 0.9;
     }
 
-    // Check for combo input during recovery
     if (this.moveFrame >= this.currentMove.startupFrames + this.currentMove.activeFrames - 2) {
       const comboMove = CombatSystem.resolveComboInput(input, this);
       if (comboMove) {
@@ -1040,7 +960,6 @@ export class Fighter {
       }
     }
 
-    // Move finished
     if (this.moveFrame >= totalFrames) {
       this.currentMove = null;
       this.moveFrame = 0;
@@ -1051,14 +970,13 @@ export class Fighter {
     }
   }
 
-  handleStunState() {
+  handleStunState(_input?: any) {
     this.stunFrames--;
     if (this.stunFrames <= 0) {
       this.state = FIGHTER_STATE.IDLE;
       this.velocity.x = 0;
       this.playAnimation('combatIdle', 0.15);
     }
-    // Apply pushback decay
     this.velocity.x *= GC.PUSHBACK_DECAY;
   }
 
@@ -1066,7 +984,6 @@ export class Fighter {
     this.velocity.y += GC.JUGGLE_GRAVITY;
     this.velocity.x *= 0.98;
 
-    // Land from juggle
     if (this.position.y <= GC.GROUND_Y && this.velocity.y <= 0) {
       this.position.y = GC.GROUND_Y;
       this.velocity.y = 0;
@@ -1074,13 +991,11 @@ export class Fighter {
       this.state = FIGHTER_STATE.KNOCKDOWN;
       this.knockdownTimer = 40;
       this.playAnimation('falling', 0.1);
-      // Reset combo
       this.comboTimer = 0;
     }
   }
 
   handleKnockdownState() {
-    // Apply gravity when airborne (e.g. after throw launches defender upward)
     if (this.position.y > GC.GROUND_Y || this.velocity.y > 0) {
       this.velocity.y += GC.JUGGLE_GRAVITY;
       if (this.position.y <= GC.GROUND_Y && this.velocity.y <= 0) {
@@ -1138,45 +1053,40 @@ export class Fighter {
     }
   }
 
-  startAttack(move, isCombo = false) {
+  startAttack(move: any, isCombo = false) {
     this.currentMove = move;
     this.moveFrame = 0;
     this.hasHitThisMove = false;
     this.state = FIGHTER_STATE.ATTACKING;
 
     const animName = move.animation;
-
-    // Auto-calculate anim speed so the FULL animation plays within the move's duration
     const clip = this.animations[animName];
     const totalFrames = move.startupFrames + move.activeFrames + move.recoveryFrames;
-    const moveDuration = totalFrames / 60; // game frames → seconds
+    const moveDuration = totalFrames / 60;
     let speed = move.animSpeed || 1.0;
     if (clip && clip.duration > 0 && moveDuration > 0) {
       speed = clip.duration / moveDuration;
-      // Clamp to reasonable range to avoid blur or slow-mo
       speed = Math.max(0.3, Math.min(speed, 4.0));
     }
 
     this.playAnimation(animName, isCombo ? 0.08 : 0.1, speed);
   }
 
-  startSidestep(direction) {
+  startSidestep(direction: number) {
     this.state = FIGHTER_STATE.SIDESTEP;
     this.sideStepDir = direction;
     this.sideStepTimer = GC.SIDESTEP_FRAMES;
     this.playAnimation(direction < 0 ? 'walkLeft' : 'walkRight', 0.1);
   }
 
-  // Called when this fighter gets hit
-  onHit(result, attackerFacing) {
+  onHit(result: any, attackerFacing: number) {
     switch (result.type) {
       case 'hit': {
         this.isBlocking = false;
         this.health = Math.max(0, this.health - result.damage);
         this.comboCount = result.comboHits;
         this.comboDamage = (this.comboDamage || 0) + result.damage;
-        this.comboTimer = 60; // frames to show combo
-        // Pushback: always push defender backward (negative = away from attacker)
+        this.comboTimer = 60;
         this.velocity.x = -result.pushback;
         this.hitFlash = 6;
 
@@ -1223,7 +1133,6 @@ export class Fighter {
         this.stunFrames = result.blockstun;
         this.velocity.x = -result.pushback;
         this.isBlocking = true;
-        // Show blocking animation (use crouchIdle for now to indicate blocking)
         if (this.isCrouching) {
           this.playAnimation('crouchIdle', 0.05);
         } else {
@@ -1234,7 +1143,6 @@ export class Fighter {
     }
   }
 
-  // Check if this fighter's current move is hitting the opponent
   isAttackActive() {
     if (this.state !== FIGHTER_STATE.ATTACKING || !this.currentMove) return false;
     if (this.hasHitThisMove) return false;
@@ -1243,14 +1151,9 @@ export class Fighter {
     return this.moveFrame >= startupFrames && this.moveFrame < startupFrames + activeFrames;
   }
 
-  // Physics update
   updatePhysics() {
-    // Project velocity along fight axis into world XZ.
-    // velocity.x = speed along the fight axis (toward/away from opponent)
-    // velocity.z = speed perpendicular to fight axis (sidestep)
     const cosA = Math.cos(this.facingAngle);
     const sinA = Math.sin(this.facingAngle);
-    // perpendicular is 90° rotated: (-sinA, cosA)
     const worldVx = this.velocity.x * cosA + this.velocity.z * (-sinA);
     const worldVz = this.velocity.x * sinA + this.velocity.z * cosA;
 
@@ -1258,13 +1161,11 @@ export class Fighter {
     this.position.y += this.velocity.y;
     this.position.z += worldVz;
 
-    // Ground collision
     if (this.position.y < GC.GROUND_Y) {
       this.position.y = GC.GROUND_Y;
       this.velocity.y = 0;
     }
 
-    // Arena boundaries (circular arena)
     const arenaRadius = GC.ARENA_WIDTH;
     const distFromCenter = Math.sqrt(this.position.x * this.position.x + this.position.z * this.position.z);
     if (distFromCenter > arenaRadius) {
@@ -1273,14 +1174,12 @@ export class Fighter {
       this.position.z *= scale;
     }
 
-    // Z-axis friction (slow to stop, don't snap back to center)
     if (Math.abs(this.velocity.z) > 0.001) {
       this.velocity.z *= 0.9;
     } else {
       this.velocity.z = 0;
     }
 
-    // Combo timer
     if (this.comboTimer > 0) {
       this.comboTimer--;
       if (this.comboTimer <= 0) {
@@ -1289,45 +1188,34 @@ export class Fighter {
       }
     }
 
-    // Hit flash
     if (this.hitFlash > 0) this.hitFlash--;
   }
 
-  // Update visual model
-  updateVisuals(deltaTime) {
+  updateVisuals(deltaTime: number) {
     if (!this.model) return;
 
-    // 1. Run animation mixer FIRST so bone transforms are fresh
     if (this.mixer) {
       this.mixer.update(deltaTime);
     }
 
-    // 2. Constrain root bone XZ to kill animation root-motion drift
-    //    (keep Y so crouches / landing squats still work)
     if (this.rootBone) {
       this.rootBone.position.x = this.rootBoneBindX;
       this.rootBone.position.z = this.rootBoneBindZ;
     }
 
-    // 3. Set model world position from game state (overrides any root motion)
     this.model.position.copy(this.position);
 
-    // 4. Facing direction — use facingAngle for smooth rotation toward opponent
-    //    Model faces +X in rest pose, so rotation.y = PI/2 - facingAngle maps correctly
     const targetRotY = Math.PI / 2 - this.facingAngle;
-    // Smooth rotation with short-arc interpolation
-    let diff = targetRotY - this.model.rotation.y;
-    // Normalize to [-PI, PI]
+    let diff = targetRotY - (this.model as any).rotation.y;
     while (diff > Math.PI) diff -= 2 * Math.PI;
     while (diff < -Math.PI) diff += 2 * Math.PI;
-    this.model.rotation.y += diff * 0.2;
+    (this.model as any).rotation.y += diff * 0.2;
 
-    // 5. Hit flash effect — uses cached material array (no traversal)
     if (this.hitFlash >= 0 && this._cachedMaterials) {
       const flashActive = this.hitFlash > 0;
       const p2Tint = this.playerIndex === 1;
       for (let i = 0; i < this._cachedMaterials.length; i++) {
-        const m = this._cachedMaterials[i];
+        const m = this._cachedMaterials[i] as THREE.MeshStandardMaterial;
         if (flashActive) {
           m.emissive.setScalar(0.5);
         } else if (p2Tint) {
@@ -1339,17 +1227,14 @@ export class Fighter {
       if (!flashActive) this.hitFlash = -1;
     }
 
-    // 6. Blocking visual (slight lean back along fight axis)
     if (this.state === FIGHTER_STATE.BLOCK_STUN) {
       this.model.position.x -= Math.cos(this.facingAngle) * 0.05;
       this.model.position.z -= Math.sin(this.facingAngle) * 0.05;
     }
   }
 
-  // Serialize state for network
   serializeState() {
-    // Find the MOVES key for current move (command field is NOT unique across moves)
-    let moveKey = null;
+    let moveKey: string | null = null;
     if (this.currentMove) {
       for (const [k, v] of Object.entries(MOVES)) {
         if (v === this.currentMove) { moveKey = k; break; }
@@ -1378,8 +1263,7 @@ export class Fighter {
     };
   }
 
-  // Deserialize state from network
-  deserializeState(data) {
+  deserializeState(data: any) {
     this.position.set(data.px, data.py, data.pz);
     this.velocity.set(data.vx, data.vy, data.vz);
     this.facing = data.facing;
@@ -1392,7 +1276,6 @@ export class Fighter {
     this.stunFrames = data.stunFrames;
     this.wins = data.wins;
 
-    // Restore current move from network (critical for attack state + hitbox)
     if (data.moveId && MOVES[data.moveId]) {
       this.currentMove = MOVES[data.moveId];
       this.moveFrame = data.moveFrame || 0;
@@ -1403,7 +1286,6 @@ export class Fighter {
       this.hasHitThisMove = false;
     }
 
-    // Update state and animation
     if (data.state !== this.state) {
       this.state = data.state;
       this.updateAnimationForState();
@@ -1433,7 +1315,6 @@ export class Fighter {
         this.playAnimation('jump', 0.1);
         break;
       case FIGHTER_STATE.ATTACKING:
-        // Restore attack animation from synced currentMove
         if (this.currentMove) {
           const animName = this.currentMove.animation;
           const clip = this.animations[animName];

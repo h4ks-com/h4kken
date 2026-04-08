@@ -5,7 +5,21 @@
 import * as THREE from 'three';
 
 export class FightCamera {
-  constructor(camera) {
+  camera: THREE.Camera;
+  targetPosition: THREE.Vector3;
+  targetLookAt: THREE.Vector3;
+  currentLookAt: THREE.Vector3;
+  smoothSpeed: number;
+  minDistance: number;
+  maxDistance: number;
+  heightOffset: number;
+  lookAtHeightOffset: number;
+  shakeIntensity: number;
+  shakeDuration: number;
+  shakeTimer: number;
+  orbitAngle: number;
+
+  constructor(camera: THREE.Camera) {
     this.camera = camera;
     this.targetPosition = new THREE.Vector3(0, 3, 10);
     this.targetLookAt = new THREE.Vector3(0, 1.2, 0);
@@ -18,47 +32,37 @@ export class FightCamera {
     this.shakeIntensity = 0;
     this.shakeDuration = 0;
     this.shakeTimer = 0;
-    // Camera orbit angle (radians) — smoothly tracks fight axis
-    this.orbitAngle = Math.PI / 2; // start looking from +Z side
-    
-    // Initialize camera
+    this.orbitAngle = Math.PI / 2;
+
     this.camera.position.copy(this.targetPosition);
-    this.camera.lookAt(this.targetLookAt);
+    (this.camera as THREE.PerspectiveCamera).lookAt(this.targetLookAt);
   }
 
-  update(fighter1Pos, fighter2Pos, deltaTime, localPlayerIndex = 0) {
-    // Calculate midpoint between fighters
+  update(fighter1Pos: THREE.Vector3, fighter2Pos: THREE.Vector3, deltaTime: number, localPlayerIndex = 0) {
     const midX = (fighter1Pos.x + fighter2Pos.x) / 2;
     const midY = Math.max((fighter1Pos.y + fighter2Pos.y) / 2, 0);
     const midZ = (fighter1Pos.z + fighter2Pos.z) / 2;
 
-    // Fight axis: direction from local player to opponent
-    // This ensures the local player is always on the LEFT side of the screen.
     const localPos = localPlayerIndex === 0 ? fighter1Pos : fighter2Pos;
     const remotePos = localPlayerIndex === 0 ? fighter2Pos : fighter1Pos;
     const dx = remotePos.x - localPos.x;
     const dz = remotePos.z - localPos.z;
     const fighterDist = Math.sqrt(dx * dx + dz * dz);
 
-    // Camera orbit angle = perpendicular to fight axis
-    // Fight axis angle = atan2(dz, dx), camera views from 90° offset
     if (fighterDist > 0.1) {
       const fightAngle = Math.atan2(dz, dx);
       let targetOrbit = fightAngle + Math.PI / 2;
 
-      // Smooth shortest-arc interpolation for orbit angle
       let angleDiff = targetOrbit - this.orbitAngle;
       while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
       while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
       this.orbitAngle += angleDiff * 0.06;
     }
 
-    // Dynamic zoom based on fighter distance
     const zoomFactor = THREE.MathUtils.clamp(fighterDist / 8, 0, 1);
     const depth = THREE.MathUtils.lerp(this.minDistance, this.maxDistance, zoomFactor);
     const height = this.heightOffset + zoomFactor * 1.5;
 
-    // Camera position: orbit around midpoint, perpendicular to fight axis
     this.targetPosition.set(
       midX + Math.cos(this.orbitAngle) * depth,
       midY + height,
@@ -71,11 +75,9 @@ export class FightCamera {
       midZ
     );
 
-    // Smooth interpolation
     this.camera.position.lerp(this.targetPosition, this.smoothSpeed);
     this.currentLookAt.lerp(this.targetLookAt, this.smoothSpeed);
 
-    // Camera shake
     if (this.shakeTimer > 0) {
       this.shakeTimer -= deltaTime;
       const shakePower = this.shakeIntensity * (this.shakeTimer / this.shakeDuration);
@@ -83,17 +85,16 @@ export class FightCamera {
       this.camera.position.y += (Math.random() - 0.5) * shakePower * 0.5;
     }
 
-    this.camera.lookAt(this.currentLookAt);
+    (this.camera as THREE.PerspectiveCamera).lookAt(this.currentLookAt);
   }
 
-  shake(intensity, duration) {
+  shake(intensity: number, duration: number) {
     this.shakeIntensity = intensity;
     this.shakeDuration = duration;
     this.shakeTimer = duration;
   }
 
-  // Zoom in for dramatic moments (round end, KO)
-  setDramaticAngle(focusPos) {
+  setDramaticAngle(focusPos: THREE.Vector3) {
     const cosA = Math.cos(this.orbitAngle);
     const sinA = Math.sin(this.orbitAngle);
     this.targetPosition.set(

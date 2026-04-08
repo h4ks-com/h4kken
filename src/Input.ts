@@ -3,23 +3,63 @@
 // Tap W/S = sidestep, Hold W = jump, Hold S = crouch
 // ============================================================
 
+export interface InputState {
+  up: boolean;
+  down: boolean;
+  left: boolean;
+  right: boolean;
+  lp: boolean;
+  rp: boolean;
+  lk: boolean;
+  rk: boolean;
+  upJust: boolean;
+  downJust: boolean;
+  leftJust: boolean;
+  rightJust: boolean;
+  lpJust: boolean;
+  rpJust: boolean;
+  lkJust: boolean;
+  rkJust: boolean;
+  forward?: boolean;
+  back?: boolean;
+  forwardJust?: boolean;
+  backJust?: boolean;
+  sideStepUp?: boolean;
+  sideStepDown?: boolean;
+  dashLeft?: boolean;
+  dashRight?: boolean;
+}
+
 export class InputManager {
+  keys: Record<string, boolean>;
+  previousKeys: Record<string, boolean>;
+  inputBuffer: InputState[];
+  bufferSize: number;
+
+  lastTapTime: { left: number; right: number; up: number; down: number };
+  doubleTapWindow: number;
+
+  holdThreshold: number;
+  upHeldFrames: number;
+  downHeldFrames: number;
+  upConsumed: boolean;
+  downConsumed: boolean;
+
+  frameCount: number;
+
   constructor() {
     this.keys = {};
     this.previousKeys = {};
     this.inputBuffer = [];
     this.bufferSize = 10;
 
-    // Double-tap detection
     this.lastTapTime = { left: 0, right: 0, up: 0, down: 0 };
     this.doubleTapWindow = 12;
 
-    // Tap-vs-hold detection for W and S
-    // holdThreshold: frames a key must be held to count as "hold" (jump/crouch)
-    this.holdThreshold = 8;  // ~133ms at 60fps
-    this.upHeldFrames = 0;   // how many frames W has been held
-    this.downHeldFrames = 0; // how many frames S has been held
-    this.upConsumed = false;  // true once we've triggered jump for this press
+    this.holdThreshold = 8;
+    this.upHeldFrames = 0;
+    this.downHeldFrames = 0;
+    this.upConsumed = false;
     this.downConsumed = false;
 
     this.frameCount = 0;
@@ -30,17 +70,17 @@ export class InputManager {
     window.addEventListener('keyup', this.onKeyUp);
   }
 
-  onKeyDown(e) {
+  onKeyDown(e: KeyboardEvent) {
     if (e.repeat) return;
     this.keys[e.code] = true;
   }
 
-  onKeyUp(e) {
+  onKeyUp(e: KeyboardEvent) {
     this.keys[e.code] = false;
   }
 
-  getInput() {
-    const input = {
+  getInput(): InputState {
+    return {
       up: this.isPressed('KeyW') || this.isPressed('ArrowUp'),
       down: this.isPressed('KeyS') || this.isPressed('ArrowDown'),
       left: this.isPressed('KeyA') || this.isPressed('ArrowLeft'),
@@ -58,11 +98,10 @@ export class InputManager {
       lkJust: this.justPressed('KeyJ'),
       rkJust: this.justPressed('KeyK'),
     };
-    return input;
   }
 
-  getRelativeInput(rawInput, facing) {
-    const rel = { ...rawInput };
+  getRelativeInput(rawInput: InputState, facing: number): InputState {
+    const rel: InputState = { ...rawInput };
     if (facing > 0) {
       rel.forward = rawInput.right;
       rel.back = rawInput.left;
@@ -77,44 +116,37 @@ export class InputManager {
     return rel;
   }
 
-  isPressed(code) {
+  isPressed(code: string) {
     return !!this.keys[code];
   }
 
-  justPressed(code) {
+  justPressed(code: string) {
     return !!this.keys[code] && !this.previousKeys[code];
   }
 
-  update() {
-    const input = this.getInput();
+  update(): InputState {
+    const input: InputState = this.getInput();
     this.frameCount++;
 
     // ── Tap-vs-Hold for W (up) ──
     if (input.up) {
       this.upHeldFrames++;
       if (this.upHeldFrames >= this.holdThreshold && !this.upConsumed) {
-        // Held long enough → jump
-        input.upJust = true;  // trigger jump (handleStandingState checks upJust)
+        input.upJust = true;
         this.upConsumed = true;
       }
-      // While held but not yet at threshold, suppress upJust so jump doesn't fire early
       if (this.upHeldFrames < this.holdThreshold) {
         input.upJust = false;
       }
     } else {
-      // Key was released
       if (this.upHeldFrames > 0 && this.upHeldFrames < this.holdThreshold && !this.upConsumed) {
-        // Short tap → sidestep up
         input.sideStepUp = true;
       }
       this.upHeldFrames = 0;
       this.upConsumed = false;
     }
 
-    // Suppress normal up/down for crouch/jump until threshold
-    // (game reads input.down for crouch, input.upJust for jump)
     if (this.upHeldFrames > 0 && this.upHeldFrames < this.holdThreshold) {
-      // Don't let anything trigger yet
       input.up = false;
     }
 
@@ -122,15 +154,11 @@ export class InputManager {
     if (input.down) {
       this.downHeldFrames++;
       if (this.downHeldFrames < this.holdThreshold) {
-        // Suppress crouch until held long enough
         input.down = false;
         input.downJust = false;
       }
-      // Once at threshold, input.down stays true → crouch activates naturally
     } else {
-      // Key was released
       if (this.downHeldFrames > 0 && this.downHeldFrames < this.holdThreshold && !this.downConsumed) {
-        // Short tap → sidestep down
         input.sideStepDown = true;
       }
       this.downHeldFrames = 0;
@@ -151,34 +179,34 @@ export class InputManager {
       this.lastTapTime.right = this.frameCount;
     }
 
-    // Store in buffer
     this.inputBuffer.push({ ...input });
     if (this.inputBuffer.length > this.bufferSize) {
       this.inputBuffer.shift();
     }
 
-    // Update previous state
     this.previousKeys = { ...this.keys };
 
     return input;
   }
 
-  checkMotion(motionSequence, buttonCheck) {
+  checkMotion(motionSequence: string[], buttonCheck: (input: InputState) => boolean) {
     if (this.inputBuffer.length < motionSequence.length + 1) return false;
     const recentInputs = this.inputBuffer.slice(-(motionSequence.length + 1));
     let motionIdx = 0;
     for (let i = 0; i < recentInputs.length - 1 && motionIdx < motionSequence.length; i++) {
       const inp = recentInputs[i];
       const dir = motionSequence[motionIdx];
+      if (inp === undefined || dir === undefined) continue;
       if (this.matchDirection(inp, dir)) {
         motionIdx++;
       }
     }
     const lastInput = recentInputs[recentInputs.length - 1];
+    if (lastInput === undefined) return false;
     return motionIdx >= motionSequence.length && buttonCheck(lastInput);
   }
 
-  matchDirection(input, dir) {
+  matchDirection(input: InputState, dir: string) {
     switch (dir) {
       case 'down': return input.down && !input.forward && !input.back;
       case 'forward': return input.forward && !input.down;

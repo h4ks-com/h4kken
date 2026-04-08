@@ -79,7 +79,7 @@ export const GAME_CONSTANTS = {
 // Each move defines: name, command, input direction, level, damage,
 // startup/active/recovery frames, hitstun, blockstun, on-hit result,
 // pushback, animation name, hitbox data, and possible combo routes
-export const MOVES = {
+export const MOVES: Record<string, any> = {
   // ========== STANDING ATTACKS ==========
   
   // Left Punch - fast jab, high
@@ -468,7 +468,7 @@ export const COMBO_STRINGS = [
 
 export class CombatSystem {
   
-  static resolveMove(input, fighter) {
+  static resolveMove(input: any, fighter: any) {
     const { state, isCrouching } = fighter;
     
     // Can't attack during these states
@@ -524,7 +524,7 @@ export class CombatSystem {
     return null;
   }
 
-  static resolveComboInput(input, fighter) {
+  static resolveComboInput(input: any, fighter: any) {
     const currentMove = fighter.currentMove;
     const moveFrame = fighter.moveFrame;
     // Can only chain during recovery or late active frames
@@ -553,7 +553,7 @@ export class CombatSystem {
   }
 
   // Determine if attack is blocked
-  static isBlocked(attacker, defender, move) {
+  static isBlocked(attacker: any, defender: any, move: any) {
     // Can't block while in hitstun, juggle, knockdown, etc.
     const unblockableStates = [
       FIGHTER_STATE.HIT_STUN, FIGHTER_STATE.JUGGLE,
@@ -581,7 +581,7 @@ export class CombatSystem {
   }
 
   // Check if high attack whiffs over crouching opponent
-  static highWhiffs(move, defender) {
+  static highWhiffs(move: any, defender: any) {
     if (move.level === LEVEL.HIGH && defender.isCrouching) {
       return true;
     }
@@ -589,7 +589,7 @@ export class CombatSystem {
   }
 
   // Calculate actual damage with combo scaling
-  static calculateDamage(baseDamage, comboHits) {
+  static calculateDamage(baseDamage: number, comboHits: number) {
     if (comboHits <= 1) return baseDamage;
     const scaling = Math.max(
       GAME_CONSTANTS.MIN_COMBO_SCALING,
@@ -599,7 +599,7 @@ export class CombatSystem {
   }
 
   // Resolve a hit between attacker and defender
-  static resolveHit(attacker, defender, move) {
+  static resolveHit(attacker: any, defender: any, move: any) {
     // Check if high attack whiffs over crouch
     if (this.highWhiffs(move, defender)) {
       return { type: 'whiff' };
@@ -631,7 +631,7 @@ export class CombatSystem {
   }
 
   // Check hitbox collision (AABB)
-  static checkHitbox(attackerPos, attackerFacingAngle, move, defenderPos, defenderWidth = 0.5) {
+  static checkHitbox(attackerPos: any, attackerFacingAngle: number, move: any, defenderPos: any, defenderWidth = 0.5) {
     // Calculate hitbox world position by projecting offset along fight axis
     const cosA = Math.cos(attackerFacingAngle);
     const sinA = Math.sin(attackerFacingAngle);
