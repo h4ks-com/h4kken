@@ -647,6 +647,15 @@ html, body {
     0 0 80px rgba(255,170,0,0.3);
 }
 
+.announce-text.countdown {
+  font-size: 14rem;
+  line-height: 1;
+  text-shadow:
+    0 0 40px rgba(0,240,255,0.9),
+    0 0 120px rgba(0,240,255,0.4),
+    4px 4px 0 rgba(255,45,106,0.7);
+}
+
 /* ============================================================
    Input Display (debug, can be toggled)
    ============================================================ */

@@ -15,6 +15,7 @@ import {
   StandardMaterial,
   Vector3,
 } from '@babylonjs/core';
+import { AudioManager } from './Audio';
 import { FightCamera } from './Camera';
 import { CombatSystem, FIGHTER_STATE, GAME_CONSTANTS } from './Combat';
 import { Fighter, type SharedAssets } from './Fighter';
@@ -66,9 +67,11 @@ export class Game {
   frame: number;
   pendingOpponentInput: InputState | null;
   lastOpponentInput: InputState;
+  audio: AudioManager;
   bgm: HTMLAudioElement;
   onResize: () => void;
   _roundResetting: boolean;
+  _nextRoundTimeout: ReturnType<typeof setTimeout> | null;
 
   constructor() {
     this.state = GAME_STATE.LOADING;
@@ -77,7 +80,7 @@ export class Game {
     if (!(canvasEl instanceof HTMLCanvasElement)) throw new Error('No canvas element found');
     this.canvas = canvasEl;
 
-    this.engine = new Engine(this.canvas, true, { antialias: true });
+    this.engine = new Engine(this.canvas, true, { antialias: true, audioEngine: true });
     this.engine.setSize(window.innerWidth, window.innerHeight);
 
     this.scene = new Scene(this.engine);
@@ -109,6 +112,7 @@ export class Game {
     this.stage = null;
     this.ui = new UI();
     this.network = new Network();
+    this.audio = new AudioManager();
 
     this.fighters = [null, null];
     this.localPlayerIndex = 0;
@@ -119,6 +123,7 @@ export class Game {
     this.roundTimerAccum = 0;
     this.isPractice = false;
     this._roundResetting = false;
+    this._nextRoundTimeout = null;
 
     this.hitParticles = [];
     this._sparkPool = [];
@@ -217,15 +222,31 @@ export class Game {
       if (this.state !== GAME_STATE.ROUND_END && this.state !== GAME_STATE.COUNTDOWN) return;
       if (msg.count === 3) {
         this.startNextRound();
-      }
-      if (msg.count > 0) {
-        this.ui.showAnnouncement(`ROUND ${this.round}`, msg.count.toString(), 900);
+        const roundSfx =
+          this.round === 1
+            ? 'announce_round1'
+            : this.round === 2
+              ? 'announce_round2'
+              : 'announce_finalround';
+        this.ui.showAnnouncement(`ROUND ${this.round}`, '', 900);
+        this.audio.play(roundSfx, 0.63);
+      } else if (msg.count === 2) {
+        this.ui.showAnnouncement('3', '', 900, 'countdown');
+        this.audio.play('count_3', 0.63);
+      } else if (msg.count === 1) {
+        this.ui.showAnnouncement('2', '', 900, 'countdown');
+        this.audio.play('count_2', 0.63);
       }
       this.state = GAME_STATE.COUNTDOWN;
     });
 
     this.network.on('fight', () => {
-      this.ui.showAnnouncement('FIGHT!', '', 1000);
+      this.ui.showAnnouncement('1', '', 400, 'countdown');
+      this.audio.play('count_1', 0.63);
+      setTimeout(() => {
+        this.ui.showAnnouncement('FIGHT!', '', 1000);
+        this.audio.play('announce_fight', 0.63);
+      }, 400);
       this.state = GAME_STATE.FIGHTING;
       this._roundResetting = false;
     });
@@ -248,6 +269,7 @@ export class Game {
           loser.setDefeat();
           this.fightCamera.setDramaticAngle(winner.position);
           this.fightCamera.shake(0.3, 0.3);
+          this.audio.play('ko_bell', 0.9);
           this.ui.showAnnouncement('K.O.', '', 2000, 'ko');
           this.ui.updateWins(
             this.fighters[this.localPlayerIndex]?.wins ?? 0,
@@ -306,6 +328,8 @@ export class Game {
       this.ui.setLoadingProgress(progress);
     });
 
+    await this.audio.load(this.scene);
+
     this.createFighters();
 
     this.ui.setLoadingProgress(1);
@@ -348,7 +372,11 @@ export class Game {
   }
 
   prepareMatch() {
-    this.round = 1;
+    if (this._nextRoundTimeout !== null) {
+      clearTimeout(this._nextRoundTimeout);
+      this._nextRoundTimeout = null;
+    }
+    this.round = 0;
     this._roundResetting = false;
     this.fighters[0]?.reset(-3);
     this.fighters[1]?.reset(3);
@@ -392,24 +420,38 @@ export class Game {
     this.ui.hideAllScreens();
     this.ui.showFightHud();
     this.prepareMatch();
+    this.round = 1;
     this.startPracticeCountdown();
   }
 
   startPracticeCountdown() {
-    let count = 3;
-    const tick = () => {
-      if (count > 0) {
-        this.ui.showAnnouncement(`ROUND ${this.round}`, count.toString(), 900);
-        count--;
-        setTimeout(tick, 1000);
-      } else {
-        this.ui.showAnnouncement('FIGHT!', '', 1000);
-        this.state = GAME_STATE.FIGHTING;
-        this._roundResetting = false;
-      }
-    };
     this.state = GAME_STATE.COUNTDOWN;
-    tick();
+    const roundSfx =
+      this.round === 1
+        ? 'announce_round1'
+        : this.round === 2
+          ? 'announce_round2'
+          : 'announce_finalround';
+    this.ui.showAnnouncement(`ROUND ${this.round}`, '', 1100);
+    this.audio.play(roundSfx, 0.63);
+    setTimeout(() => {
+      this.ui.showAnnouncement('3', '', 900, 'countdown');
+      this.audio.play('count_3', 0.63);
+      setTimeout(() => {
+        this.ui.showAnnouncement('2', '', 900, 'countdown');
+        this.audio.play('count_2', 0.63);
+        setTimeout(() => {
+          this.ui.showAnnouncement('1', '', 900, 'countdown');
+          this.audio.play('count_1', 0.63);
+          setTimeout(() => {
+            this.ui.showAnnouncement('FIGHT!', '', 1000);
+            this.audio.play('announce_fight', 0.63);
+            this.state = GAME_STATE.FIGHTING;
+            this._roundResetting = false;
+          }, 900);
+        }, 900);
+      }, 900);
+    }, 1100);
   }
 
   // ============================================================
@@ -571,11 +613,14 @@ export class Game {
       this.ui.showHitEffect();
       this.fightCamera.shake(0.15, 0.15);
       this.spawnHitSpark(defender.position, attacker.facingAngle);
+      const sfx = move.damage <= 12 ? 'hit_light' : 'hit_heavy';
+      this.audio.playAt(sfx, defender.position);
     } else if (result.type === 'blocked') {
       defender.onHit(result, attacker.facingAngle);
       this.ui.showBlockEffect();
       this.fightCamera.shake(0.05, 0.1);
       this.spawnBlockSpark(defender.position);
+      this.audio.playAt('block', defender.position);
     }
   }
 
@@ -686,6 +731,8 @@ export class Game {
     this.fightCamera.setDramaticAngle(winner.position);
     this.fightCamera.shake(0.3, 0.3);
 
+    this.audio.play('ko_bell', 0.9);
+
     this.ui.showAnnouncement('K.O.', '', 2000, 'ko');
     this.ui.updateWins(
       this.fighters[this.localPlayerIndex]?.wins ?? 0,
@@ -707,7 +754,7 @@ export class Game {
     if (matchOver) {
       setTimeout(() => this.onMatchEnd(winnerIdx), 2500);
     } else {
-      setTimeout(() => this.startNextRound(), 3000);
+      this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
     }
   }
 
@@ -728,7 +775,7 @@ export class Game {
         this.network.sendRoundResult(-1, f1.wins, f2.wins, false);
       }
       this.ui.showAnnouncement('DRAW', 'TIME UP', 2000);
-      setTimeout(() => this.startNextRound(), 3000);
+      this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
       return;
     }
 
@@ -738,6 +785,7 @@ export class Game {
     winner.setVictory();
     loser.setDefeat();
 
+    this.audio.play('announce_time', 0.63);
     this.ui.showAnnouncement('TIME UP', '', 2000);
     this.ui.updateWins(
       this.fighters[this.localPlayerIndex]?.wins ?? 0,
@@ -759,7 +807,7 @@ export class Game {
     if (matchOver) {
       setTimeout(() => this.onMatchEnd(winnerIdx), 2500);
     } else {
-      setTimeout(() => this.startNextRound(), 3000);
+      this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
     }
   }
 
@@ -770,6 +818,9 @@ export class Game {
       winnerIdx === this.localPlayerIndex
         ? (this.ui.p1Name as HTMLElement).textContent
         : (this.ui.p2Name as HTMLElement).textContent;
+    if (winnerIdx === this.localPlayerIndex) {
+      this.audio.play('announce_youwin', 0.63);
+    }
     this.ui.showAnnouncement(winnerName || '', 'WINS!', 0, 'victory');
 
     setTimeout(() => {

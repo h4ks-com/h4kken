@@ -46,13 +46,16 @@ const ANIM_MAP: Record<string, string> = {
   idle: 'Idle_Loop',
   combatIdle: 'Idle_Loop',
   crouchIdle: 'Crouch_Idle_Loop',
+  crouchEnter: 'Crouch_Enter',
+  crouchExit: 'Crouch_Exit',
   crouchWalk: 'Crouch_Fwd_Loop',
+  crouchWalkBack: 'Crouch_Bwd_Loop',
   walk: 'Walk_Loop',
-  walkBack: 'Walk_Loop',
-  walkLeft: 'Walk_Loop',
-  walkRight: 'Walk_Loop',
+  walkBack: 'Jog_Bwd_Loop',
+  walkLeft: 'Jog_Left_Loop',
+  walkRight: 'Jog_Right_Loop',
   run: 'Jog_Fwd_Loop',
-  runBack: 'Jog_Fwd_Loop',
+  runBack: 'Jog_Bwd_Loop',
   sprint: 'Sprint_Loop',
   jump: 'Jump_Start',
   falling: 'Jump_Loop',
@@ -60,10 +63,22 @@ const ANIM_MAP: Record<string, string> = {
   punch1: 'Punch_Jab',
   punch2: 'Punch_Cross',
   heavyPunch: 'Sword_Attack',
+  // Kick attacks — all mapped to the single Kick clip; speed is auto-scaled per move frame data
+  kickRight: 'Kick',
+  kickLeft: 'Kick',
+  lowKick: 'Kick',
+  sweepKick: 'Kick',
+  // Sidestep / dodge
+  dodgeLeft: 'Dodge_Left',
+  dodgeRight: 'Dodge_Right',
+  // Hit reactions — wider variety
   hurt1: 'Hit_Chest',
   hurt2: 'Hit_Head',
-  leanRight: 'Idle_Loop',
-  leanLeft: 'Idle_Loop',
+  hurt3: 'Hit_Stomach',
+  hurt4: 'Hit_Shoulder_L',
+  hurt5: 'Hit_Shoulder_R',
+  // Win / loss
+  defeat: 'Death01',
   victory: 'Dance_Loop',
 };
 
@@ -72,6 +87,7 @@ const LOOP_ANIMS = new Set([
   'combatIdle',
   'crouchIdle',
   'crouchWalk',
+  'crouchWalkBack',
   'walk',
   'walkBack',
   'walkLeft',
@@ -80,6 +96,7 @@ const LOOP_ANIMS = new Set([
   'runBack',
   'sprint',
   'falling',
+  'victory',
 ]);
 
 export class Fighter {
@@ -326,7 +343,7 @@ export class Fighter {
     }
   }
 
-  playAnimation(name: string, _crossfadeDuration = 0.15, speed = 1.0) {
+  playAnimation(name: string, crossfade = 0.15, speed = 1.0) {
     const newGroup = this.animGroups[name];
     if (!newGroup) return;
 
@@ -336,6 +353,8 @@ export class Fighter {
       this.currentAnimGroup.stop();
     }
 
+    newGroup.enableBlending = true;
+    newGroup.blendingSpeed = crossfade;
     newGroup.speedRatio = speed;
     newGroup.start(newGroup.loopAnimation, speed);
     this.currentAnimGroup = newGroup;
@@ -492,7 +511,16 @@ export class Fighter {
     if (input.down) {
       this.state = FIGHTER_STATE.CROUCH;
       this.isCrouching = true;
-      this.playAnimation('crouchIdle', 0.15);
+      if (this.animGroups.crouchEnter) {
+        this.playAnimation('crouchEnter', 0.1);
+        this.animGroups.crouchEnter.onAnimationGroupEndObservable.addOnce(() => {
+          if (this.isCrouching && this.state === FIGHTER_STATE.CROUCH) {
+            this.playAnimation('crouchIdle', 0.1);
+          }
+        });
+      } else {
+        this.playAnimation('crouchIdle', 0.15);
+      }
       return;
     }
 
@@ -545,7 +573,16 @@ export class Fighter {
     if (!input.down) {
       this.isCrouching = false;
       this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle', 0.15);
+      if (this.animGroups.crouchExit) {
+        this.playAnimation('crouchExit', 0.1);
+        this.animGroups.crouchExit.onAnimationGroupEndObservable.addOnce(() => {
+          if (!this.isCrouching && this.state === FIGHTER_STATE.IDLE) {
+            this.playAnimation('combatIdle', 0.1);
+          }
+        });
+      } else {
+        this.playAnimation('combatIdle', 0.15);
+      }
       return;
     }
 
@@ -557,15 +594,21 @@ export class Fighter {
 
     if (input.forward) {
       this.velocity.x = GC.CROUCH_WALK_SPEED;
-      if (this.state !== FIGHTER_STATE.CROUCH_WALK) {
+      if (
+        this.state !== FIGHTER_STATE.CROUCH_WALK ||
+        this.currentAnimGroup !== this.animGroups.crouchWalk
+      ) {
         this.state = FIGHTER_STATE.CROUCH_WALK;
         this.playAnimation('crouchWalk', 0.2);
       }
     } else if (input.back) {
       this.velocity.x = -GC.CROUCH_WALK_SPEED;
-      if (this.state !== FIGHTER_STATE.CROUCH_WALK) {
+      if (
+        this.state !== FIGHTER_STATE.CROUCH_WALK ||
+        this.currentAnimGroup !== this.animGroups.crouchWalkBack
+      ) {
         this.state = FIGHTER_STATE.CROUCH_WALK;
-        this.playAnimation('crouchWalk', 0.2);
+        this.playAnimation('crouchWalkBack', 0.2);
       }
     } else {
       this.velocity.x = 0;
@@ -760,7 +803,7 @@ export class Fighter {
     this.state = FIGHTER_STATE.SIDESTEP;
     this.sideStepDir = direction;
     this.sideStepTimer = GC.SIDESTEP_FRAMES;
-    this.playAnimation(direction < 0 ? 'walkLeft' : 'walkRight', 0.1);
+    this.playAnimation(direction < 0 ? 'dodgeLeft' : 'dodgeRight', 0.1);
   }
 
   onHit(result: HitResult, _attackerFacing: number) {
@@ -776,11 +819,14 @@ export class Fighter {
 
         switch (result.onHit) {
           case HIT_RESULT.STAGGER:
-          case HIT_RESULT.KNOCKBACK:
+          case HIT_RESULT.KNOCKBACK: {
             this.state = FIGHTER_STATE.HIT_STUN;
             this.stunFrames = result.hitstun;
-            this.playAnimation(Math.random() > 0.5 ? 'hurt1' : 'hurt2', 0.05);
+            const hurtAnims = ['hurt1', 'hurt2', 'hurt3', 'hurt4', 'hurt5'] as const;
+            const hurtAnim = hurtAnims[Math.floor(Math.random() * hurtAnims.length)] ?? 'hurt1';
+            this.playAnimation(hurtAnim, 0.05);
             break;
+          }
           case HIT_RESULT.LAUNCH:
             this.state = FIGHTER_STATE.JUGGLE;
             this.velocity.y = result.launchVelocity;
@@ -798,7 +844,7 @@ export class Fighter {
             this.state = FIGHTER_STATE.HIT_STUN;
             this.stunFrames = result.hitstun + 10;
             this.velocity.x = -result.pushback * 0.3;
-            this.playAnimation('hurt1', 0.05, 0.5);
+            this.playAnimation('hurt3', 0.05, 0.5);
             break;
           case HIT_RESULT.THROW_HIT:
             this.state = FIGHTER_STATE.KNOCKDOWN;
@@ -1059,6 +1105,6 @@ export class Fighter {
   setDefeat() {
     this.state = FIGHTER_STATE.DEFEAT;
     this.velocity.set(0, 0, 0);
-    this.playAnimation('falling', 0.3);
+    this.playAnimation('defeat', 0.3);
   }
 }
