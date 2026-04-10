@@ -115,8 +115,23 @@ export function setupNetworkEvents(game: Game): void {
   game.network.on('gameState', (msg) => {
     if (game.localPlayerIndex === 1 && msg.state) {
       const { p1, p2 } = msg.state;
+      // Sync the remote fighter (P1) fully — we have no local knowledge of P1's position
       if (p1 && game.fighters[0]) game.fighters[0].deserializeState(p1);
-      if (p2 && game.fighters[1]) game.fighters[1].deserializeState(p2);
+      // For P2's own fighter, only accept authoritative combat results from P1.
+      // Skipping position/velocity/animation prevents P1's stale snapshot from
+      // rubber-banding P2's character back to where it was RTT/2 ms ago.
+      if (p2 && game.fighters[1]) {
+        const f = game.fighters[1];
+        f.health = p2.health;
+        f.wins = p2.wins;
+        f.stunFrames = p2.stunFrames;
+        f.comboCount = p2.comboCount;
+        f.comboDamage = p2.comboDamage;
+        f.superMeter = p2.superMeter;
+        if (p2.superPowerActive !== f.superPowerActive) {
+          f.superPowerActive = p2.superPowerActive;
+        }
+      }
       if (msg.state.timer !== undefined) {
         game.roundTimer = msg.state.timer;
         game.ui.updateTimer(game.roundTimer);

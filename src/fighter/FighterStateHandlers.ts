@@ -71,11 +71,11 @@ export function handleStandingState(fighter: Fighter, input: InputState): void {
   }
 
   if (input.sideStepUp) {
-    fighter.startSidestep(-1);
+    fighter.startSidestep(1);
     return;
   }
   if (input.sideStepDown) {
-    fighter.startSidestep(1);
+    fighter.startSidestep(-1);
     return;
   }
 
