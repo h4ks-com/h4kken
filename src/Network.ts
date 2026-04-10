@@ -41,6 +41,8 @@ interface RoundResultMsg {
   p1Wins: number;
   p2Wins: number;
   matchOver: boolean;
+  victoryAnim: string;
+  defeatAnim: string;
 }
 
 interface ErrorMsg {
@@ -99,6 +101,8 @@ type RoundResultOutMsg = {
   p1Wins: number;
   p2Wins: number;
   matchOver: boolean;
+  victoryAnim: string;
+  defeatAnim: string;
 };
 type LeaveMsg = { type: 'leave' };
 
@@ -236,8 +240,15 @@ export class Network {
     this.send({ type: 'gameState', frame, state });
   }
 
-  sendRoundResult(winner: number, p1Wins: number, p2Wins: number, matchOver: boolean) {
-    this.send({ type: 'roundResult', winner, p1Wins, p2Wins, matchOver });
+  sendRoundResult(
+    winner: number,
+    p1Wins: number,
+    p2Wins: number,
+    matchOver: boolean,
+    victoryAnim: string,
+    defeatAnim: string,
+  ) {
+    this.send({ type: 'roundResult', winner, p1Wins, p2Wins, matchOver, victoryAnim, defeatAnim });
   }
 
   leave() {

@@ -72,6 +72,10 @@ export class Game {
   onResize: () => void;
   _roundResetting: boolean;
   _nextRoundTimeout: ReturnType<typeof setTimeout> | null;
+  // Bot AI state
+  private _botDecisionTimer = 0;
+  private _botAttackCooldown = 0;
+  private _botHeldInput: Partial<import('./Input').InputState> = {};
 
   constructor() {
     this.state = GAME_STATE.LOADING;
@@ -222,6 +226,7 @@ export class Game {
       if (this.state !== GAME_STATE.ROUND_END && this.state !== GAME_STATE.COUNTDOWN) return;
       if (msg.count === 3) {
         this.startNextRound();
+        if (this.round === 1) this._startIntroAnimations();
         const roundSfx =
           this.round === 1
             ? 'announce_round1'
@@ -247,6 +252,9 @@ export class Game {
         this.ui.showAnnouncement('FIGHT!', '', 1000);
         this.audio.play('announce_fight', 0.63);
       }, 400);
+      // Cancel any running intro, snap both fighters to idle before control transfers
+      this.fighters[0]?.cancelIntro();
+      this.fighters[1]?.cancelIntro();
       this.state = GAME_STATE.FIGHTING;
       this._roundResetting = false;
     });
@@ -265,8 +273,8 @@ export class Game {
           if (!winner || !loser) return;
           winner.wins = winnerIdx === 0 ? msg.p1Wins : msg.p2Wins;
           loser.wins = winnerIdx === 0 ? msg.p2Wins : msg.p1Wins;
-          winner.setVictory();
-          loser.setDefeat();
+          winner.setVictory(msg.victoryAnim);
+          loser.setDefeat(msg.defeatAnim);
           this.fightCamera.setDramaticAngle(winner.position);
           this.fightCamera.shake(0.3, 0.3);
           this.audio.play('ko_bell', 0.9);
@@ -276,6 +284,11 @@ export class Game {
             this.fighters[1 - this.localPlayerIndex]?.wins ?? 0,
             GC.ROUNDS_TO_WIN,
           );
+        }
+        if (msg.matchOver && winnerIdx >= 0) {
+          setTimeout(() => this.onMatchEnd(winnerIdx), 2500);
+        } else {
+          this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
         }
       }
     });
@@ -434,6 +447,7 @@ export class Game {
           : 'announce_finalround';
     this.ui.showAnnouncement(`ROUND ${this.round}`, '', 1100);
     this.audio.play(roundSfx, 0.63);
+    if (this.round === 1) this._startIntroAnimations();
     setTimeout(() => {
       this.ui.showAnnouncement('3', '', 900, 'countdown');
       this.audio.play('count_3', 0.63);
@@ -446,12 +460,23 @@ export class Game {
           setTimeout(() => {
             this.ui.showAnnouncement('FIGHT!', '', 1000);
             this.audio.play('announce_fight', 0.63);
+            // Ensure both fighters are in idle before handing control back
+            this.fighters[0]?.cancelIntro();
+            this.fighters[1]?.cancelIntro();
             this.state = GAME_STATE.FIGHTING;
             this._roundResetting = false;
           }, 900);
         }, 900);
       }, 900);
     }, 1100);
+  }
+
+  private _startIntroAnimations() {
+    const f0 = this.fighters[0];
+    const f1 = this.fighters[1];
+    if (!f0 || !f1) return;
+    const anim0 = f0.playIntroAnimation();
+    f1.playIntroAnimationExcluding(anim0);
   }
 
   // ============================================================
@@ -643,47 +668,94 @@ export class Game {
 
   getSimpleBotInput(bot: Fighter, opponent: Fighter): InputState {
     const input: InputState = this.emptyInput();
+
+    // While being hit or blocking, hold back to block — don't try to act
+    if (bot.state === FIGHTER_STATE.HIT_STUN || bot.state === FIGHTER_STATE.BLOCK_STUN) {
+      input.left = true;
+      this._botDecisionTimer = 20;
+      return input;
+    }
+
+    // While attacking or in another committed state, don't inject new inputs
+    if (
+      bot.state === FIGHTER_STATE.ATTACKING ||
+      bot.state === FIGHTER_STATE.KNOCKDOWN ||
+      bot.state === FIGHTER_STATE.GETUP ||
+      bot.state === FIGHTER_STATE.LANDING ||
+      bot.state === FIGHTER_STATE.JUGGLE
+    ) {
+      return input;
+    }
+
+    // Tick down timers
+    if (this._botDecisionTimer > 0) {
+      this._botDecisionTimer--;
+      // Carry held directional input between decisions
+      if (this._botHeldInput.right) input.right = true;
+      if (this._botHeldInput.left) input.left = true;
+      if (this._botHeldInput.down) input.down = true;
+      return input;
+    }
+    if (this._botAttackCooldown > 0) this._botAttackCooldown--;
+
+    // Make a new decision
     const dx = opponent.position.x - bot.position.x;
     const dz = opponent.position.z - bot.position.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
-
     const rand = Math.random();
 
-    if (dist > 3) {
+    this._botHeldInput = {};
+
+    if (dist > 3.5) {
+      // Too far — approach steadily
+      this._botHeldInput.right = true;
       input.right = true;
-    } else if (dist > 1.5) {
-      if (rand < 0.3) {
+      this._botDecisionTimer = 25;
+    } else if (dist > 2.0) {
+      // Mid range — approach or probe
+      if (rand < 0.55) {
+        this._botHeldInput.right = true;
         input.right = true;
-      } else if (rand < 0.5) {
-        input.left = true;
-      }
-      if (rand > 0.95) {
+        this._botDecisionTimer = 20;
+      } else if (rand < 0.7 && this._botAttackCooldown <= 0) {
         input.lpJust = true;
         input.lp = true;
+        this._botAttackCooldown = 45;
+        this._botDecisionTimer = 30;
+      } else {
+        this._botDecisionTimer = 15;
       }
     } else {
-      if (rand < 0.15) {
+      // Close range — commit to a move or reposition
+      if (rand < 0.28 && this._botAttackCooldown <= 0) {
         input.lpJust = true;
         input.lp = true;
-      } else if (rand < 0.25) {
+        this._botAttackCooldown = 45;
+        this._botDecisionTimer = 30;
+      } else if (rand < 0.45 && this._botAttackCooldown <= 0) {
         input.rpJust = true;
         input.rp = true;
-      } else if (rand < 0.3) {
+        this._botAttackCooldown = 50;
+        this._botDecisionTimer = 35;
+      } else if (rand < 0.55 && this._botAttackCooldown <= 0) {
         input.lkJust = true;
         input.lk = true;
-      } else if (rand < 0.45) {
+        this._botAttackCooldown = 45;
+        this._botDecisionTimer = 30;
+      } else if (rand < 0.65) {
+        // Step back
+        this._botHeldInput.left = true;
         input.left = true;
-      } else if (rand < 0.48) {
+        this._botDecisionTimer = 20;
+      } else if (rand < 0.75) {
+        // Brief crouch
+        this._botHeldInput.down = true;
         input.down = true;
-        if (Math.random() < 0.3) {
-          input.lkJust = true;
-          input.lk = true;
-        }
+        this._botDecisionTimer = 18;
+      } else {
+        // Neutral — wait a beat
+        this._botDecisionTimer = 20;
       }
-    }
-
-    if (bot.state === FIGHTER_STATE.HIT_STUN || bot.state === FIGHTER_STATE.BLOCK_STUN) {
-      input.left = true;
     }
 
     return input;
@@ -725,8 +797,9 @@ export class Game {
     if (!winner || !loser) return;
 
     winner.wins++;
-    winner.setVictory();
-    loser.setDefeat();
+    const matchOver = winner.wins >= GC.ROUNDS_TO_WIN;
+    const victoryAnim = winner.setVictory();
+    const defeatAnim = loser.setDefeat(undefined, matchOver);
 
     this.fightCamera.setDramaticAngle(winner.position);
     this.fightCamera.shake(0.3, 0.3);
@@ -740,14 +813,14 @@ export class Game {
       GC.ROUNDS_TO_WIN,
     );
 
-    const matchOver = winner.wins >= GC.ROUNDS_TO_WIN;
-
     if (!this.isPractice && this.localPlayerIndex === 0) {
       this.network.sendRoundResult(
         winnerIdx,
         this.fighters[0]?.wins ?? 0,
         this.fighters[1]?.wins ?? 0,
         matchOver,
+        victoryAnim,
+        defeatAnim,
       );
     }
 
@@ -772,7 +845,7 @@ export class Game {
       winnerIdx = 1;
     } else {
       if (!this.isPractice && this.localPlayerIndex === 0) {
-        this.network.sendRoundResult(-1, f1.wins, f2.wins, false);
+        this.network.sendRoundResult(-1, f1.wins, f2.wins, false, '', '');
       }
       this.ui.showAnnouncement('DRAW', 'TIME UP', 2000);
       this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
@@ -782,8 +855,9 @@ export class Game {
     const winner = winnerIdx === 0 ? f1 : f2;
     const loser = winnerIdx === 0 ? f2 : f1;
     winner.wins++;
-    winner.setVictory();
-    loser.setDefeat();
+    const matchOver = winner.wins >= GC.ROUNDS_TO_WIN;
+    const victoryAnim = winner.setVictory();
+    const defeatAnim = loser.setDefeat(undefined, matchOver);
 
     this.audio.play('announce_time', 0.63);
     this.ui.showAnnouncement('TIME UP', '', 2000);
@@ -793,14 +867,14 @@ export class Game {
       GC.ROUNDS_TO_WIN,
     );
 
-    const matchOver = winner.wins >= GC.ROUNDS_TO_WIN;
-
     if (!this.isPractice && this.localPlayerIndex === 0) {
       this.network.sendRoundResult(
         winnerIdx,
         this.fighters[0]?.wins ?? 0,
         this.fighters[1]?.wins ?? 0,
         matchOver,
+        victoryAnim,
+        defeatAnim,
       );
     }
 
@@ -814,14 +888,12 @@ export class Game {
   onMatchEnd(winnerIdx: number) {
     this.state = GAME_STATE.MATCH_END;
     this.stopBGM();
-    const winnerName =
-      winnerIdx === this.localPlayerIndex
-        ? (this.ui.p1Name as HTMLElement).textContent
-        : (this.ui.p2Name as HTMLElement).textContent;
     if (winnerIdx === this.localPlayerIndex) {
       this.audio.play('announce_youwin', 0.63);
+      this.ui.showAnnouncement('YOU WIN!', '', 0, 'victory');
+    } else {
+      this.ui.showAnnouncement('YOU LOSE', '', 0, 'victory');
     }
-    this.ui.showAnnouncement(winnerName || '', 'WINS!', 0, 'victory');
 
     setTimeout(() => {
       this.ui.hideAnnouncement();

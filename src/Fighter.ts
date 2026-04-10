@@ -10,7 +10,6 @@ import {
   type AnimationGroup,
   type Bone,
   Color3,
-  type ISceneLoaderAsyncResult,
   PBRMaterial,
   Quaternion,
   type Scene,
@@ -40,64 +39,215 @@ export interface SharedAssets {
 
 const GC = GAME_CONSTANTS;
 
-// Maps game animation names to animation names inside the GLB file.
-// Animations not available in the pack are mapped to a close substitute.
-const ANIM_MAP: Record<string, string> = {
-  idle: 'Idle_Loop',
-  combatIdle: 'Idle_Loop',
-  crouchIdle: 'Crouch_Idle_Loop',
-  crouchEnter: 'Crouch_Enter',
-  crouchExit: 'Crouch_Exit',
-  crouchWalk: 'Crouch_Fwd_Loop',
-  crouchWalkBack: 'Crouch_Bwd_Loop',
-  walk: 'Walk_Loop',
-  walkBack: 'Jog_Bwd_Loop',
-  walkLeft: 'Jog_Left_Loop',
-  walkRight: 'Jog_Right_Loop',
-  run: 'Jog_Fwd_Loop',
-  runBack: 'Jog_Bwd_Loop',
-  sprint: 'Sprint_Loop',
-  jump: 'Jump_Start',
-  falling: 'Jump_Loop',
-  landing: 'Jump_Land',
-  punch1: 'Punch_Jab',
-  punch2: 'Punch_Cross',
-  heavyPunch: 'Sword_Attack',
-  // Kick attacks — all mapped to the single Kick clip; speed is auto-scaled per move frame data
-  kickRight: 'Kick',
-  kickLeft: 'Kick',
-  lowKick: 'Kick',
-  sweepKick: 'Kick',
-  // Sidestep / dodge
-  dodgeLeft: 'Dodge_Left',
-  dodgeRight: 'Dodge_Right',
-  // Hit reactions — wider variety
-  hurt1: 'Hit_Chest',
-  hurt2: 'Hit_Head',
-  hurt3: 'Hit_Stomach',
-  hurt4: 'Hit_Shoulder_L',
-  hurt5: 'Hit_Shoulder_R',
-  // Win / loss
-  defeat: 'Death01',
-  victory: 'Dance_Loop',
+// ── GLB clip name validation ──────────────────────────────────────────────
+// Typed unions of every clip in each GLB. Using these in AnimConfig.glb gives
+// compile-time errors when a clip name is misspelled or doesn't exist.
+const UAL1_CLIPS = [
+  'A_TPose',
+  'BackFlip',
+  'Celebration',
+  'Crawl_Bwd_Loop',
+  'Crawl_Enter',
+  'Crawl_Exit',
+  'Crawl_Fwd_Loop',
+  'Crawl_Idle_Loop',
+  'Crawl_Left_Loop',
+  'Crawl_Right_Loop',
+  'Crouch_Bwd_Loop',
+  'Crouch_Enter',
+  'Crouch_Exit',
+  'Crouch_Fwd_Loop',
+  'Crouch_Idle_Loop',
+  'Crying',
+  'Dance_Loop',
+  'Death01',
+  'Death02',
+  'Dodge_Left',
+  'Dodge_Right',
+  'Drink',
+  'Fixing_Kneeling',
+  'GroundSit_Enter',
+  'GroundSit_Exit',
+  'GroundSit_Idle_Loop',
+  'Hit_Chest',
+  'Hit_Head',
+  'Hit_Shoulder_L',
+  'Hit_Shoulder_R',
+  'Hit_Stomach',
+  'Idle_LookAround_Loop',
+  'Idle_Loop',
+  'Idle_Talking_Loop',
+  'Idle_Tired_Loop',
+  'Interact',
+  'Jog_Bwd_Loop',
+  'Jog_Fwd_Loop',
+  'Jog_Left_Loop',
+  'Jog_Right_Loop',
+  'Jump_Land',
+  'Jump_Loop',
+  'Jump_Start',
+  'Kick',
+  'Punch_Cross',
+  'Punch_Jab',
+  'PunchKick_Enter',
+  'PunchKick_Exit',
+  'Roll',
+  'Sprint_Loop',
+  'Spell_Double_Enter',
+  'Spell_Double_Exit',
+  'Spell_Double_Idle_Loop',
+  'Spell_Double_Shoot_Loop',
+  'Turn90_L',
+  'Turn90_R',
+  'Walk_Loop',
+] as const;
+
+const UAL2_CLIPS = [
+  'Hit_Knockback',
+  'Idle_FoldArms_Loop',
+  'Idle_No_Loop',
+  'IdleToLay',
+  'KipUp',
+  'LayToIdle',
+  'LiftAir_Hit_L',
+  'LiftAir_Hit_R',
+  'Melee_Combo',
+  'Melee_Hook',
+  'Melee_Hook_Rec',
+  'Melee_Knee',
+  'Melee_Knee_Rec',
+  'Melee_Uppercut',
+  'Slide_Exit',
+  'Slide_Loop',
+  'Slide_Start',
+  'Walk_Bwd_Loop',
+  'Walk_Fwd_Loop',
+  'Yes',
+] as const;
+
+type Ual1Clip = (typeof UAL1_CLIPS)[number];
+type Ual2Clip = (typeof UAL2_CLIPS)[number];
+type AnimClip = Ual1Clip | Ual2Clip;
+
+// Animation configuration table — single source of truth for all animation bindings.
+// glb:   exact clip name inside the GLB (typed — typos are compile errors)
+// src:   'ual1' = character.glb (default), 'ual2' = UAL2.glb
+// loop:  whether the clip loops (default false)
+// speed: playback speed multiplier (default 1.0)
+// blend: crossfade blend duration in seconds (default 0.15)
+interface AnimConfig {
+  glb: AnimClip;
+  src?: 'ual1' | 'ual2';
+  loop?: boolean;
+  speed?: number;
+  blend?: number;
+}
+
+const ANIM_CONFIG = {
+  // ── Idle / neutral ──────────────────────────────────────────────────────
+  idle: { glb: 'Idle_Loop', loop: true, blend: 0.2 },
+  combatIdle: { glb: 'Idle_Loop', loop: true, blend: 0.2 },
+  // ── Crouch ──────────────────────────────────────────────────────────────
+  crouchIdle: { glb: 'Crouch_Idle_Loop', loop: true, blend: 0.15 },
+  crouchEnter: { glb: 'Crouch_Enter', speed: 4.0, blend: 0.1 },
+  crouchExit: { glb: 'Crouch_Exit', speed: 4.0, blend: 0.1 },
+  crouchWalk: { glb: 'Crouch_Fwd_Loop', loop: true, blend: 0.2 },
+  crouchWalkBack: { glb: 'Crouch_Bwd_Loop', loop: true, blend: 0.2 },
+  // ── Locomotion ──────────────────────────────────────────────────────────
+  walk: { glb: 'Walk_Loop', loop: true, blend: 0.2 },
+  // UAL2 Walk_Bwd_Loop is a proper backward walk; Jog_Bwd_Loop looked like running
+  walkBack: { glb: 'Walk_Bwd_Loop', src: 'ual2', loop: true, blend: 0.2 },
+  walkLeft: { glb: 'Jog_Left_Loop', loop: true, blend: 0.2 },
+  walkRight: { glb: 'Jog_Right_Loop', loop: true, blend: 0.2 },
+  run: { glb: 'Jog_Fwd_Loop', loop: true, blend: 0.2 },
+  runBack: { glb: 'Jog_Bwd_Loop', loop: true, speed: 1.5, blend: 0.1 },
+  sprint: { glb: 'Sprint_Loop', loop: true, blend: 0.15 },
+  // ── Air ─────────────────────────────────────────────────────────────────
+  // jumpSquat plays a fast crouch anticipation (visual only, physics starts immediately)
+  jumpSquat: { glb: 'Crouch_Enter', speed: 6.0, blend: 0.05 },
+  jump: { glb: 'Jump_Start', blend: 0.1 },
+  falling: { glb: 'Jump_Loop', loop: true, blend: 0.1 },
+  landing: { glb: 'Jump_Land', blend: 0.1 },
+  // ── Attacks ─────────────────────────────────────────────────────────────
+  // speed for attacks is auto-calculated from frame data in startAttack()
+  punch1: { glb: 'Punch_Jab', blend: 0.1 },
+  punch2: { glb: 'Punch_Cross', blend: 0.1 },
+  heavyPunch: { glb: 'Melee_Hook', src: 'ual2', blend: 0.1 },
+  meleeUppercut: { glb: 'Melee_Uppercut', src: 'ual2', blend: 0.08 },
+  meleeKnee: { glb: 'Melee_Knee', src: 'ual2', blend: 0.08 },
+  kickRight: { glb: 'Kick', blend: 0.08 },
+  kickLeft: { glb: 'Kick', blend: 0.08 },
+  lowKick: { glb: 'Kick', blend: 0.08 },
+  sweepKick: { glb: 'Kick', blend: 0.08 },
+  // ── Sidestep / dodge ────────────────────────────────────────────────────
+  dodgeLeft: { glb: 'Dodge_Left', blend: 0.1 },
+  dodgeRight: { glb: 'Dodge_Right', blend: 0.1 },
+  // ── Block ────────────────────────────────────────────────────────────────
+  block: { glb: 'PunchKick_Enter', blend: 0.06 },
+  blockExit: { glb: 'PunchKick_Exit', blend: 0.1 },
+  // ── Hit reactions — light (body shots) ──────────────────────────────────
+  hurt1: { glb: 'Hit_Chest', blend: 0.05 },
+  hurt2: { glb: 'Hit_Head', blend: 0.05 },
+  hurt3: { glb: 'Hit_Stomach', blend: 0.05 },
+  hurt4: { glb: 'Hit_Shoulder_L', blend: 0.05 },
+  hurt5: { glb: 'Hit_Shoulder_R', blend: 0.05 },
+  // ── Hit reactions — heavy / airborne (UAL2) ─────────────────────────────
+  hurtHeavy: { glb: 'Hit_Knockback', src: 'ual2', blend: 0.04 },
+  hurtAir1: { glb: 'LiftAir_Hit_L', src: 'ual2', blend: 0.04 },
+  hurtAir2: { glb: 'LiftAir_Hit_R', src: 'ual2', blend: 0.04 },
+  // ── Get-up ───────────────────────────────────────────────────────────────
+  kipUp: { glb: 'KipUp', src: 'ual2', blend: 0.15 },
+  // ── Win / loss ──────────────────────────────────────────────────────────
+  defeat: { glb: 'Death01', blend: 0.2 },
+  defeatBig: { glb: 'Death02', blend: 0.2 },
+  defeatMatch: { glb: 'Crying', blend: 0.3 },
+  victory: { glb: 'Dance_Loop', loop: true, blend: 0.2 },
+  victoryBackflip: { glb: 'BackFlip', blend: 0.2 },
+  victoryCelebrate: { glb: 'Celebration', blend: 0.2 },
+  victoryYes: { glb: 'Yes', src: 'ual2', blend: 0.2 },
+  victorySmug: { glb: 'Idle_FoldArms_Loop', src: 'ual2', loop: true, blend: 0.3 },
+  // ── Pre-fight intro / taunt animations ──────────────────────────────────
+  introDrink: { glb: 'Drink', blend: 0.2 },
+  introGroundSitEnter: { glb: 'GroundSit_Enter', blend: 0.2 },
+  introGroundSitIdle: { glb: 'GroundSit_Idle_Loop', loop: true, blend: 0.1 },
+  introGroundSitExit: { glb: 'GroundSit_Exit', blend: 0.1 },
+  introTalking: { glb: 'Idle_Talking_Loop', loop: true, blend: 0.2 },
+  introInteract: { glb: 'Interact', blend: 0.2 },
+  introPunchKick: { glb: 'PunchKick_Enter', blend: 0.2 },
+  introSpellEnter: { glb: 'Spell_Double_Enter', blend: 0.2 },
+  introSpellIdle: { glb: 'Spell_Double_Idle_Loop', loop: true, blend: 0.1 },
+  introSpellExit: { glb: 'Spell_Double_Exit', blend: 0.1 },
+  introFixing: { glb: 'Fixing_Kneeling', blend: 0.2 },
+} satisfies Record<string, AnimConfig>;
+
+// Derive the union of all valid animation keys from ANIM_CONFIG for type-safe callers.
+type AnimKey = keyof typeof ANIM_CONFIG;
+
+// Animation pools and context-based selection.
+const ANIM_POOLS = {
+  hurtLight: ['hurt1', 'hurt3', 'hurt4', 'hurt5'] as AnimKey[],
+  hurtAir: ['hurtAir1', 'hurtAir2'] as AnimKey[],
+  victory: [
+    'victory',
+    'victoryBackflip',
+    'victoryCelebrate',
+    'victoryYes',
+    'victorySmug',
+  ] as AnimKey[],
+  intro: [
+    'introDrink',
+    'introGroundSitEnter',
+    'introTalking',
+    'introInteract',
+    'introPunchKick',
+    'introSpellEnter',
+    'introFixing',
+  ] as AnimKey[],
 };
 
-const LOOP_ANIMS = new Set([
-  'idle',
-  'combatIdle',
-  'crouchIdle',
-  'crouchWalk',
-  'crouchWalkBack',
-  'walk',
-  'walkBack',
-  'walkLeft',
-  'walkRight',
-  'run',
-  'runBack',
-  'sprint',
-  'falling',
-  'victory',
-]);
+function pickRandom<T>(pool: T[]): T {
+  return pool[Math.floor(Math.random() * pool.length)] as T;
+}
 
 export class Fighter {
   playerIndex: number;
@@ -135,6 +285,8 @@ export class Fighter {
   landingTimer: number;
   hitFlash: number;
   private _rootRotY = 0;
+  private _introActive = false;
+  private _introTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(playerIndex: number, scene: Scene) {
     this.playerIndex = playerIndex;
@@ -205,40 +357,41 @@ export class Fighter {
   }
 
   static async loadAssets(scene: Scene, onProgress?: (p: number) => void): Promise<SharedAssets> {
-    const result: ISceneLoaderAsyncResult = await SceneLoader.ImportMeshAsync(
-      null,
-      '/assets/models/',
-      'character.glb',
-      scene,
-    );
+    // Load both packs in parallel — UAL2 shares the exact same 65-bone rig as UAL1.
+    const [result, ual2] = await Promise.all([
+      SceneLoader.ImportMeshAsync(null, '/assets/models/', 'character.glb', scene),
+      SceneLoader.ImportMeshAsync(null, '/assets/models/', 'UAL2.glb', scene),
+    ]);
     onProgress?.(1);
 
-    console.log(
-      '[H4KKEN] GLB loaded:',
-      `meshes=${result.meshes.length}`,
-      `skeletons=${result.skeletons.length}`,
-      `transformNodes=${result.transformNodes.length}`,
-      `animGroups=${result.animationGroups.length}`,
-      result.animationGroups.map((ag) => ag.name),
-    );
+    // UAL2 is animation-only — hide its meshes and nodes entirely.
+    for (const ag of ual2.animationGroups) ag.stop();
+    for (const m of ual2.meshes) m.setEnabled(false);
+    for (const n of ual2.transformNodes) n.setEnabled(false);
 
-    // Stop all animations — each fighter drives its own cloned groups
+    // Stop UAL1 animations — each fighter drives its own cloned groups.
     for (const ag of result.animationGroups) ag.stop();
 
-    // Map game animation names to loaded AnimationGroup objects
+    // Build lookup tables keyed by clip name for fast resolution.
+    const ual1ByClip = new Map(result.animationGroups.map((ag) => [ag.name, ag]));
+    const ual2ByClip = new Map(ual2.animationGroups.map((ag) => [ag.name, ag]));
+
     const animGroups: Record<string, AnimationGroup> = {};
-    for (const [gameName, glbName] of Object.entries(ANIM_MAP)) {
-      const found = result.animationGroups.find((ag) => ag.name === glbName);
+    for (const [gameName, cfg] of Object.entries(ANIM_CONFIG) as Array<[string, AnimConfig]>) {
+      const src = cfg.src === 'ual2' ? ual2ByClip : ual1ByClip;
+      const found = src.get(cfg.glb);
       if (found) {
         animGroups[gameName] = found;
       } else {
-        console.warn(`[H4KKEN] Anim "${gameName}" (GLB: "${glbName}") not found`);
+        console.warn(
+          `[H4KKEN] Anim "${gameName}" (GLB: "${cfg.glb}", src: ${cfg.src ?? 'ual1'}) not found`,
+        );
       }
     }
 
     const baseSkeleton = result.skeletons[0] ?? null;
 
-    // Collect meshes that have geometry (skip the synthetic __root__ node)
+    // Collect meshes that have geometry (skip the synthetic __root__ node).
     const baseMeshes: AbstractMesh[] = [];
     for (const m of result.meshes) {
       if (!m.getTotalVertices || m.getTotalVertices() === 0) continue;
@@ -246,13 +399,6 @@ export class Fighter {
       baseMeshes.push(m);
     }
     for (const n of result.transformNodes) n.setEnabled(false);
-
-    console.log(
-      '[H4KKEN] Base meshes:',
-      baseMeshes.map((m) => m.name),
-      '| skeleton:',
-      baseSkeleton?.name ?? 'none',
-    );
 
     return { baseMeshes, baseSkeleton, animGroups };
   }
@@ -316,13 +462,13 @@ export class Fighter {
     this._cloneAnimGroups(animGroups, boneByName);
 
     this.rootNode.position.copyFrom(this.position);
-    // initRotY must match PI/2 + facingAngle used in updateVisuals().
+    // initRotY must match PI/2 - facingAngle used in updateVisuals().
     // P0 facingAngle=0  → PI/2;  P1 facingAngle=PI → -PI/2
     const initRotY = this.playerIndex === 0 ? Math.PI / 2 : -Math.PI / 2;
     this._rootRotY = initRotY;
     this.rootNode.rotationQuaternion = Fighter._makeRootQuat(initRotY);
 
-    this.playAnimation('combatIdle', 0.2);
+    this.playAnimation('combatIdle');
   }
 
   private _cloneAnimGroups(
@@ -338,12 +484,13 @@ export class Fighter {
         return target;
       });
       clonedGroup.stop();
-      clonedGroup.loopAnimation = LOOP_ANIMS.has(name);
+      clonedGroup.loopAnimation = (ANIM_CONFIG as Record<string, AnimConfig>)[name]?.loop ?? false;
       this.animGroups[name] = clonedGroup;
     }
   }
 
-  playAnimation(name: string, crossfade = 0.15, speed = 1.0) {
+  playAnimation(name: string, speedOverride?: number, blendOverride?: number) {
+    const cfg = (ANIM_CONFIG as Record<string, AnimConfig>)[name];
     const newGroup = this.animGroups[name];
     if (!newGroup) return;
 
@@ -353,10 +500,16 @@ export class Fighter {
       this.currentAnimGroup.stop();
     }
 
+    const speed = speedOverride ?? cfg?.speed ?? 1.0;
+    const blend = blendOverride ?? cfg?.blend ?? 0.15;
+
+    const from = Math.min(newGroup.from, newGroup.to);
+    const to = Math.max(newGroup.from, newGroup.to);
+
     newGroup.enableBlending = true;
-    newGroup.blendingSpeed = crossfade;
+    newGroup.blendingSpeed = blend;
     newGroup.speedRatio = speed;
-    newGroup.start(newGroup.loopAnimation, speed);
+    newGroup.start(newGroup.loopAnimation, speed, from, to);
     this.currentAnimGroup = newGroup;
   }
 
@@ -385,12 +538,12 @@ export class Fighter {
     this.hitFlash = 0;
     this.facing = 1;
     this.facingAngle = startX > 0 ? Math.PI : 0;
-    this._rootRotY = Math.PI / 2 + this.facingAngle;
+    this._rootRotY = Math.PI / 2 - this.facingAngle;
     if (this.rootNode) {
       this.rootNode.rotationQuaternion = Fighter._makeRootQuat(this._rootRotY);
     }
 
-    this.playAnimation('combatIdle', 0.3);
+    this.playAnimation('combatIdle');
   }
 
   processInput(input: InputState, opponentPos: Vector3) {
@@ -493,6 +646,7 @@ export class Fighter {
     }
 
     if (input.upJust) {
+      // Physics starts immediately — no input lag
       this.velocity.y = GC.JUMP_VELOCITY;
       if (input.forward) {
         this.velocity.x = GC.JUMP_FORWARD_X;
@@ -504,7 +658,11 @@ export class Fighter {
         this.state = FIGHTER_STATE.JUMP;
       }
       this.isGrounded = false;
-      this.playAnimation('jump', 0.1);
+      // Quick anticipation squat (visual only) then transition to jump arc
+      this.playAnimation('jumpSquat', 6.0, 0.05);
+      this.animGroups.jumpSquat?.onAnimationGroupEndObservable.addOnce(() => {
+        if (!this.isGrounded) this.playAnimation('jump');
+      });
       return;
     }
 
@@ -512,14 +670,14 @@ export class Fighter {
       this.state = FIGHTER_STATE.CROUCH;
       this.isCrouching = true;
       if (this.animGroups.crouchEnter) {
-        this.playAnimation('crouchEnter', 0.1);
+        this.playAnimation('crouchEnter');
         this.animGroups.crouchEnter.onAnimationGroupEndObservable.addOnce(() => {
           if (this.isCrouching && this.state === FIGHTER_STATE.CROUCH) {
-            this.playAnimation('crouchIdle', 0.1);
+            this.playAnimation('crouchIdle');
           }
         });
       } else {
-        this.playAnimation('crouchIdle', 0.15);
+        this.playAnimation('crouchIdle');
       }
       return;
     }
@@ -537,7 +695,7 @@ export class Fighter {
       this.state = FIGHTER_STATE.DASH_BACK;
       this.dashTimer = GC.DASH_BACK_FRAMES;
       this.velocity.x = -GC.DASH_BACK_SPEED;
-      this.playAnimation('runBack', 0.1, 1.5);
+      this.playAnimation('runBack');
       return;
     }
 
@@ -545,23 +703,23 @@ export class Fighter {
       this.state = FIGHTER_STATE.RUN;
       this.isRunning = true;
       this.runFrames = 0;
-      this.playAnimation('sprint', 0.15);
+      this.playAnimation('sprint');
       return;
     }
 
     if (input.forward) {
       this.velocity.x = GC.WALK_SPEED;
       this.state = FIGHTER_STATE.WALK_FORWARD;
-      this.playAnimation('walk', 0.2);
+      this.playAnimation('walk');
     } else if (input.back) {
       this.velocity.x = -GC.BACK_WALK_SPEED;
       this.state = FIGHTER_STATE.WALK_BACKWARD;
-      this.playAnimation('walkBack', 0.2);
+      this.playAnimation('walkBack');
     } else {
       this.velocity.x = 0;
       if (this.state !== FIGHTER_STATE.IDLE) {
         this.state = FIGHTER_STATE.IDLE;
-        this.playAnimation('combatIdle', 0.2);
+        this.playAnimation('combatIdle');
       }
     }
   }
@@ -574,14 +732,14 @@ export class Fighter {
       this.isCrouching = false;
       this.state = FIGHTER_STATE.IDLE;
       if (this.animGroups.crouchExit) {
-        this.playAnimation('crouchExit', 0.1);
+        this.playAnimation('crouchExit');
         this.animGroups.crouchExit.onAnimationGroupEndObservable.addOnce(() => {
           if (!this.isCrouching && this.state === FIGHTER_STATE.IDLE) {
-            this.playAnimation('combatIdle', 0.1);
+            this.playAnimation('combatIdle');
           }
         });
       } else {
-        this.playAnimation('combatIdle', 0.15);
+        this.playAnimation('combatIdle');
       }
       return;
     }
@@ -599,7 +757,7 @@ export class Fighter {
         this.currentAnimGroup !== this.animGroups.crouchWalk
       ) {
         this.state = FIGHTER_STATE.CROUCH_WALK;
-        this.playAnimation('crouchWalk', 0.2);
+        this.playAnimation('crouchWalk');
       }
     } else if (input.back) {
       this.velocity.x = -GC.CROUCH_WALK_SPEED;
@@ -608,13 +766,13 @@ export class Fighter {
         this.currentAnimGroup !== this.animGroups.crouchWalkBack
       ) {
         this.state = FIGHTER_STATE.CROUCH_WALK;
-        this.playAnimation('crouchWalkBack', 0.2);
+        this.playAnimation('crouchWalkBack');
       }
     } else {
       this.velocity.x = 0;
       if (this.state !== FIGHTER_STATE.CROUCH) {
         this.state = FIGHTER_STATE.CROUCH;
-        this.playAnimation('crouchIdle', 0.15);
+        this.playAnimation('crouchIdle');
       }
     }
   }
@@ -629,7 +787,7 @@ export class Fighter {
       this.isGrounded = true;
       this.state = FIGHTER_STATE.LANDING;
       this.landingTimer = GC.LANDING_FRAMES;
-      this.playAnimation('landing', 0.1);
+      this.playAnimation('landing');
     }
   }
 
@@ -650,7 +808,7 @@ export class Fighter {
       this.isRunning = false;
       this.state = FIGHTER_STATE.IDLE;
       this.velocity.x = 0;
-      this.playAnimation('combatIdle', 0.15);
+      this.playAnimation('combatIdle');
       return;
     }
 
@@ -660,7 +818,7 @@ export class Fighter {
   handleAttackState(input: InputState) {
     if (!this.currentMove) {
       this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle', 0.15);
+      this.playAnimation('combatIdle');
       return;
     }
 
@@ -690,7 +848,7 @@ export class Fighter {
       this.hasHitThisMove = false;
       this.state = FIGHTER_STATE.IDLE;
       this.velocity.x = 0;
-      this.playAnimation('combatIdle', 0.15);
+      this.playAnimation('combatIdle');
     }
   }
 
@@ -699,7 +857,7 @@ export class Fighter {
     if (this.stunFrames <= 0) {
       this.state = FIGHTER_STATE.IDLE;
       this.velocity.x = 0;
-      this.playAnimation('combatIdle', 0.15);
+      this.playAnimation('combatIdle');
     }
     this.velocity.x *= GC.PUSHBACK_DECAY;
   }
@@ -714,7 +872,7 @@ export class Fighter {
       this.velocity.x = 0;
       this.state = FIGHTER_STATE.KNOCKDOWN;
       this.knockdownTimer = 40;
-      this.playAnimation('falling', 0.1);
+      this.playAnimation('falling');
       this.comboTimer = 0;
     }
   }
@@ -737,7 +895,7 @@ export class Fighter {
       this.isGrounded = true;
       this.state = FIGHTER_STATE.GETUP;
       this.getupTimer = GC.GETUP_FRAMES;
-      this.playAnimation('landing', 0.2);
+      this.playAnimation('kipUp');
     }
   }
 
@@ -745,7 +903,7 @@ export class Fighter {
     this.getupTimer--;
     if (this.getupTimer <= 0) {
       this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle', 0.2);
+      this.playAnimation('combatIdle');
     }
   }
 
@@ -756,7 +914,7 @@ export class Fighter {
     if (this.sideStepTimer <= 0) {
       this.velocity.z = 0;
       this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle', 0.15);
+      this.playAnimation('combatIdle');
     }
   }
 
@@ -765,7 +923,7 @@ export class Fighter {
     if (this.dashTimer <= 0) {
       this.velocity.x = 0;
       this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle', 0.15);
+      this.playAnimation('combatIdle');
     }
   }
 
@@ -773,7 +931,7 @@ export class Fighter {
     this.landingTimer--;
     if (this.landingTimer <= 0) {
       this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle', 0.15);
+      this.playAnimation('combatIdle');
     }
   }
 
@@ -789,21 +947,23 @@ export class Fighter {
     const moveDuration = totalFrames / 60;
     let speed = move.animSpeed || 1.0;
     if (group) {
-      const groupDuration = group.to - group.from;
+      // Math.abs handles GLBs where from > to (would otherwise produce negative speed)
+      const groupDuration = Math.abs(group.to - group.from);
       if (groupDuration > 0 && moveDuration > 0) {
-        speed = groupDuration / moveDuration;
+        speed = groupDuration / 60 / moveDuration;
         speed = Math.max(0.3, Math.min(speed, 4.0));
       }
     }
 
-    this.playAnimation(animName, isCombo ? 0.08 : 0.1, speed);
+    // combo blend overrides the per-animation default for a tighter chain feel
+    this.playAnimation(animName as AnimKey, speed, isCombo ? 0.08 : undefined);
   }
 
   startSidestep(direction: number) {
     this.state = FIGHTER_STATE.SIDESTEP;
     this.sideStepDir = direction;
     this.sideStepTimer = GC.SIDESTEP_FRAMES;
-    this.playAnimation(direction < 0 ? 'dodgeLeft' : 'dodgeRight', 0.1);
+    this.playAnimation(direction < 0 ? 'dodgeLeft' : 'dodgeRight');
   }
 
   onHit(result: HitResult, _attackerFacing: number) {
@@ -819,12 +979,15 @@ export class Fighter {
 
         switch (result.onHit) {
           case HIT_RESULT.STAGGER:
+            this.state = FIGHTER_STATE.HIT_STUN;
+            this.stunFrames = result.hitstun;
+            this.playAnimation(pickRandom(ANIM_POOLS.hurtLight));
+            break;
           case HIT_RESULT.KNOCKBACK: {
             this.state = FIGHTER_STATE.HIT_STUN;
             this.stunFrames = result.hitstun;
-            const hurtAnims = ['hurt1', 'hurt2', 'hurt3', 'hurt4', 'hurt5'] as const;
-            const hurtAnim = hurtAnims[Math.floor(Math.random() * hurtAnims.length)] ?? 'hurt1';
-            this.playAnimation(hurtAnim, 0.05);
+            // UAL2 knockback stumble — visually distinct from light stagger
+            this.playAnimation('hurtHeavy');
             break;
           }
           case HIT_RESULT.LAUNCH:
@@ -832,19 +995,20 @@ export class Fighter {
             this.velocity.y = result.launchVelocity;
             this.velocity.x = -result.pushback * 0.5;
             this.isGrounded = false;
-            this.playAnimation('falling', 0.1);
+            this.playAnimation(pickRandom(ANIM_POOLS.hurtAir));
             break;
           case HIT_RESULT.KNOCKDOWN:
             this.state = FIGHTER_STATE.KNOCKDOWN;
             this.knockdownTimer = 50;
             this.velocity.x = -result.pushback * 1.5;
-            this.playAnimation('falling', 0.1);
+            this.playAnimation('falling');
             break;
           case HIT_RESULT.CRUMPLE:
             this.state = FIGHTER_STATE.HIT_STUN;
             this.stunFrames = result.hitstun + 10;
             this.velocity.x = -result.pushback * 0.3;
-            this.playAnimation('hurt3', 0.05, 0.5);
+            // Heavy stagger — reuse knockback animation at half speed for crumple feel
+            this.playAnimation('hurtHeavy', 0.5);
             break;
           case HIT_RESULT.THROW_HIT:
             this.state = FIGHTER_STATE.KNOCKDOWN;
@@ -852,7 +1016,7 @@ export class Fighter {
             this.velocity.y = 0.15;
             this.velocity.x = -(result.pushback || 0.3);
             this.isGrounded = false;
-            this.playAnimation('falling', 0.1);
+            this.playAnimation('falling');
             break;
         }
         break;
@@ -863,11 +1027,8 @@ export class Fighter {
         this.stunFrames = result.blockstun;
         this.velocity.x = -result.pushback;
         this.isBlocking = true;
-        if (this.isCrouching) {
-          this.playAnimation('crouchIdle', 0.05);
-        } else {
-          this.playAnimation('combatIdle', 0.05);
-        }
+        // Guard-raise reaction: PunchKick_Enter snaps both arms up into block pose
+        this.playAnimation('block', undefined, 0.05);
         break;
       }
     }
@@ -942,8 +1103,9 @@ export class Fighter {
     this.rootNode.position.copyFrom(this.position);
 
     // Quaternius character natively faces +Z. Facing angle is the world-space direction to opponent.
-    // targetRotY = PI/2 + facingAngle rotates the +Z-facing model to look in the facingAngle direction.
-    const targetRotY = Math.PI / 2 + this.facingAngle;
+    // BabylonJS RotationAxis(Up, θ) maps +Z → (sin θ, 0, cos θ). To face direction (cos A, 0, sin A)
+    // we need sin θ = cos A and cos θ = sin A, so θ = PI/2 - facingAngle (not PI/2 + facingAngle).
+    const targetRotY = Math.PI / 2 - this.facingAngle;
     let diff = targetRotY - this._rootRotY;
     while (diff > Math.PI) diff -= 2 * Math.PI;
     while (diff < -Math.PI) diff += 2 * Math.PI;
@@ -1028,24 +1190,24 @@ export class Fighter {
   updateAnimationForState() {
     switch (this.state) {
       case FIGHTER_STATE.IDLE:
-        this.playAnimation('combatIdle', 0.15);
+        this.playAnimation('combatIdle');
         break;
       case FIGHTER_STATE.WALK_FORWARD:
-        this.playAnimation('walk', 0.15);
+        this.playAnimation('walk');
         break;
       case FIGHTER_STATE.WALK_BACKWARD:
-        this.playAnimation('walkBack', 0.15);
+        this.playAnimation('walkBack');
         break;
       case FIGHTER_STATE.CROUCH:
-        this.playAnimation('crouchIdle', 0.15);
+        this.playAnimation('crouchIdle');
         break;
       case FIGHTER_STATE.RUN:
-        this.playAnimation('sprint', 0.15);
+        this.playAnimation('sprint');
         break;
       case FIGHTER_STATE.JUMP:
       case FIGHTER_STATE.JUMP_FORWARD:
       case FIGHTER_STATE.JUMP_BACKWARD:
-        this.playAnimation('jump', 0.1);
+        this.playAnimation('jump');
         break;
       case FIGHTER_STATE.ATTACKING:
         if (this.currentMove) {
@@ -1058,53 +1220,157 @@ export class Fighter {
           const moveDuration = totalFrames / 60;
           let speed = this.currentMove.animSpeed || 1.0;
           if (group) {
-            const groupDuration = group.to - group.from;
+            const groupDuration = Math.abs(group.to - group.from);
             if (groupDuration > 0 && moveDuration > 0) {
-              speed = groupDuration / moveDuration;
+              speed = groupDuration / 60 / moveDuration;
               speed = Math.max(0.3, Math.min(speed, 4.0));
             }
           }
-          this.playAnimation(animName, 0.1, speed);
+          this.playAnimation(animName as AnimKey, speed);
         }
         break;
       case FIGHTER_STATE.HIT_STUN:
       case FIGHTER_STATE.BLOCK_STUN:
-        this.playAnimation('hurt1', 0.05);
+        this.playAnimation('hurt1');
         break;
       case FIGHTER_STATE.JUGGLE:
       case FIGHTER_STATE.KNOCKDOWN:
-        this.playAnimation('falling', 0.1);
+        this.playAnimation('falling');
         break;
       case FIGHTER_STATE.SIDESTEP:
-        this.playAnimation(this.sideStepDir < 0 ? 'walkLeft' : 'walkRight', 0.1);
+        this.playAnimation(this.sideStepDir < 0 ? 'walkLeft' : 'walkRight');
         break;
       case FIGHTER_STATE.DASH_BACK:
-        this.playAnimation('walkBack', 0.1);
+        this.playAnimation('walkBack');
         break;
       case FIGHTER_STATE.LANDING:
-        this.playAnimation('landing', 0.1);
+        this.playAnimation('landing');
         break;
       case FIGHTER_STATE.GETUP:
-        this.playAnimation('landing', 0.15);
+        this.playAnimation('landing');
         break;
       case FIGHTER_STATE.VICTORY:
-        this.playAnimation('victory', 0.3);
+        this.playAnimation('victory');
         break;
       case FIGHTER_STATE.DEFEAT:
-        this.playAnimation('falling', 0.3);
+        this.playAnimation('falling');
         break;
     }
   }
 
-  setVictory() {
+  setVictory(animName?: string): string {
     this.state = FIGHTER_STATE.VICTORY;
     this.velocity.set(0, 0, 0);
-    this.playAnimation('victory', 0.3);
+    const chosen = animName ?? pickRandom(ANIM_POOLS.victory);
+    this.playAnimation(chosen);
+    return chosen;
   }
 
-  setDefeat() {
+  setDefeat(animName?: string, matchOver = false): string {
     this.state = FIGHTER_STATE.DEFEAT;
     this.velocity.set(0, 0, 0);
-    this.playAnimation('defeat', 0.3);
+    let chosen: string;
+    if (animName) {
+      chosen = animName;
+    } else if (matchOver) {
+      // Lost the whole match — they earned the Crying
+      chosen = 'defeatMatch';
+    } else if (this.comboCount >= 3 || this.comboDamage >= GC.MAX_HEALTH * 0.5) {
+      // Ended by a big combo — more dramatic collapse
+      chosen = 'defeatBig';
+    } else {
+      chosen = 'defeat';
+    }
+    this.playAnimation(chosen as AnimKey);
+    return chosen;
+  }
+
+  // ── Pre-fight intro animations ──────────────────────────────────────────
+
+  // Play a random intro animation. Returns the chosen key so the other player
+  // can call playIntroAnimationExcluding() to guarantee different intros.
+  playIntroAnimation(): AnimKey {
+    this.cancelIntro();
+    const chosen = pickRandom(ANIM_POOLS.intro);
+    this._introActive = true;
+    this._playIntroSequence(chosen);
+    return chosen;
+  }
+
+  playIntroAnimationExcluding(exclude: AnimKey): AnimKey {
+    this.cancelIntro();
+    const filtered = ANIM_POOLS.intro.filter((k) => k !== exclude);
+    const pool = filtered.length > 0 ? filtered : ANIM_POOLS.intro;
+    const chosen = pickRandom(pool);
+    this._introActive = true;
+    this._playIntroSequence(chosen);
+    return chosen;
+  }
+
+  private _playIntroSequence(key: AnimKey) {
+    // snap = instant cut for the opening frame so there's no idle→intro blend
+    const snap = 1.0;
+    switch (key) {
+      case 'introGroundSitEnter':
+        // Start already sitting — idle first, then stand up before the fight
+        this.playAnimation('introGroundSitIdle', undefined, snap);
+        this._introTimeout = setTimeout(() => {
+          if (!this._introActive) return;
+          this.playAnimation('introGroundSitExit');
+          this.animGroups.introGroundSitExit?.onAnimationGroupEndObservable.addOnce(() => {
+            if (!this._introActive) return;
+            this._introActive = false;
+            this.playAnimation('combatIdle');
+          });
+        }, 1800);
+        break;
+
+      case 'introSpellEnter':
+        this.playAnimation('introSpellEnter', undefined, snap);
+        this.animGroups.introSpellEnter?.onAnimationGroupEndObservable.addOnce(() => {
+          if (!this._introActive) return;
+          this.playAnimation('introSpellIdle');
+          this._introTimeout = setTimeout(() => {
+            if (!this._introActive) return;
+            this.playAnimation('introSpellExit');
+            this.animGroups.introSpellExit?.onAnimationGroupEndObservable.addOnce(() => {
+              if (!this._introActive) return;
+              this._introActive = false;
+              this.playAnimation('combatIdle');
+            });
+          }, 1200);
+        });
+        break;
+
+      case 'introTalking':
+        this.playAnimation('introTalking', undefined, snap);
+        // Loop until countdown ends — cancelIntro() will snap back to idle
+        this._introTimeout = setTimeout(() => {
+          if (!this._introActive) return;
+          this._introActive = false;
+          this.playAnimation('combatIdle');
+        }, 3000);
+        break;
+
+      default:
+        // Single-play: returns to combatIdle automatically when done
+        this.playAnimation(key, undefined, snap);
+        this.animGroups[key]?.onAnimationGroupEndObservable.addOnce(() => {
+          if (!this._introActive) return;
+          this._introActive = false;
+          this.playAnimation('combatIdle');
+        });
+        break;
+    }
+  }
+
+  // Cancel any running intro and immediately return to combat idle.
+  cancelIntro() {
+    this._introActive = false;
+    if (this._introTimeout !== null) {
+      clearTimeout(this._introTimeout);
+      this._introTimeout = null;
+    }
+    this.playAnimation('combatIdle', undefined, 0.2);
   }
 }
