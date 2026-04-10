@@ -9,10 +9,7 @@ import {
   Engine,
   FreeCamera,
   ImageProcessingConfiguration,
-  type Mesh,
-  MeshBuilder,
   Scene,
-  StandardMaterial,
   Vector3,
 } from '@babylonjs/core';
 import { AudioManager, BgmManager } from '../Audio';
@@ -25,6 +22,8 @@ import { Network } from '../Network';
 import { Stage } from '../Stage';
 import { UI } from '../UI';
 import { BotAI } from './BotAI';
+import { EffectsManager } from './EffectsManager';
+import { setupNetworkEvents } from './NetworkEvents';
 
 const GC = GAME_CONSTANTS;
 
@@ -57,12 +56,7 @@ export class Game {
   roundTimer: number;
   roundTimerAccum: number;
   isPractice: boolean;
-  hitParticles: Mesh[];
-  _sparkPool: Mesh[];
-  _sparkGeo: Mesh;
-  _hitMat0: StandardMaterial;
-  _hitMat1: StandardMaterial;
-  _blockMat: StandardMaterial;
+  effects: EffectsManager;
   tickRate: number;
   tickDuration: number;
   accumulator: number;
@@ -129,32 +123,7 @@ export class Game {
     this._roundResetting = false;
     this._nextRoundTimeout = null;
 
-    this.hitParticles = [];
-    this._sparkPool = [];
-
-    // Create a hidden template sphere for sparks — we clone it from the pool
-    const sparkTemplate = MeshBuilder.CreateSphere(
-      'sparkTemplate',
-      { diameter: 0.06, segments: 2 },
-      this.scene,
-    );
-    sparkTemplate.setEnabled(false);
-    this._sparkGeo = sparkTemplate;
-
-    this._hitMat0 = new StandardMaterial('hitMat0', this.scene);
-    this._hitMat0.diffuseColor = new Color3(1, 0.4, 0);
-    this._hitMat0.emissiveColor = new Color3(1, 0.4, 0);
-    this._hitMat0.alpha = 1;
-
-    this._hitMat1 = new StandardMaterial('hitMat1', this.scene);
-    this._hitMat1.diffuseColor = new Color3(1, 0.8, 0);
-    this._hitMat1.emissiveColor = new Color3(1, 0.8, 0);
-    this._hitMat1.alpha = 1;
-
-    this._blockMat = new StandardMaterial('blockMat', this.scene);
-    this._blockMat.diffuseColor = new Color3(0.267, 0.533, 1);
-    this._blockMat.emissiveColor = new Color3(0.267, 0.533, 1);
-    this._blockMat.alpha = 1;
+    this.effects = new EffectsManager(this.scene);
 
     this.tickRate = 60;
     this.tickDuration = 1 / this.tickRate;
@@ -168,7 +137,7 @@ export class Game {
     window.addEventListener('resize', this.onResize);
 
     this.setupUIEvents();
-    this.setupNetworkEvents();
+    setupNetworkEvents(this);
   }
 
   emptyInput(): InputState {
@@ -204,136 +173,6 @@ export class Game {
     this.ui.btnControls?.addEventListener('click', () => this.ui.showScreen('controls-screen'));
     this.ui.btnBackControls?.addEventListener('click', () => this.ui.showScreen('menu-screen'));
     this.ui.btnCancelSearch?.addEventListener('click', () => this.cancelSearch());
-  }
-
-  setupNetworkEvents() {
-    this.network.on('waiting', () => {
-      this.ui.showScreen('waiting-screen');
-    });
-
-    this.network.on('matched', (msg) => {
-      this.localPlayerIndex = msg.playerIndex;
-      const myName = this.ui.playerNameInput?.value || 'Player';
-      this.ui.setPlayerNames(myName, msg.opponentName);
-      this.ui.hideAllScreens();
-      this.ui.showFightHud();
-      this.prepareMatch();
-    });
-
-    this.network.on('countdown', (msg) => {
-      if (this.state !== GAME_STATE.ROUND_END && this.state !== GAME_STATE.COUNTDOWN) return;
-      if (msg.count === 3) {
-        this.startNextRound();
-        if (this.round === 1) this._startIntroAnimations();
-        const roundSfx =
-          this.round === 1
-            ? 'announce_round1'
-            : this.round === 2
-              ? 'announce_round2'
-              : 'announce_finalround';
-        this.ui.showAnnouncement(`ROUND ${this.round}`, '', 900);
-        this.audio.play(roundSfx, 0.63);
-      } else if (msg.count === 2) {
-        this.ui.showAnnouncement('3', '', 900, 'countdown');
-        this.audio.play('count_3', 0.63);
-      } else if (msg.count === 1) {
-        this.ui.showAnnouncement('2', '', 900, 'countdown');
-        this.audio.play('count_2', 0.63);
-      }
-      this.state = GAME_STATE.COUNTDOWN;
-    });
-
-    this.network.on('fight', () => {
-      this.ui.showAnnouncement('1', '', 400, 'countdown');
-      this.audio.play('count_1', 0.63);
-      setTimeout(() => {
-        this.ui.showAnnouncement('FIGHT!', '', 1000);
-        this.audio.play('announce_fight', 0.63);
-      }, 400);
-      // Cancel any running intro, snap both fighters to idle before control transfers
-      this.fighters[0]?.cancelIntro();
-      this.fighters[1]?.cancelIntro();
-      this.state = GAME_STATE.FIGHTING;
-      this._roundResetting = false;
-    });
-
-    this.network.on('opponentInput', (msg) => {
-      this.pendingOpponentInput = msg.input;
-    });
-
-    this.network.on('roundResult', (msg) => {
-      if (this.state === GAME_STATE.FIGHTING) {
-        this.state = GAME_STATE.ROUND_END;
-        const winnerIdx = msg.winner;
-        if (winnerIdx >= 0 && winnerIdx < 2) {
-          const winner = this.fighters[winnerIdx];
-          const loser = this.fighters[winnerIdx === 0 ? 1 : 0];
-          if (!winner || !loser) return;
-          winner.wins = winnerIdx === 0 ? msg.p1Wins : msg.p2Wins;
-          loser.wins = winnerIdx === 0 ? msg.p2Wins : msg.p1Wins;
-          winner.setVictory(msg.victoryAnim);
-          loser.setDefeat(msg.defeatAnim);
-          this.fightCamera.setDramaticAngle(winner.position);
-          this.fightCamera.shake(0.3, 0.3);
-          this.audio.play('ko_bell', 0.9);
-          this.ui.showAnnouncement('K.O.', '', 2000, 'ko');
-          this.ui.updateWins(
-            this.fighters[this.localPlayerIndex]?.wins ?? 0,
-            this.fighters[1 - this.localPlayerIndex]?.wins ?? 0,
-            GC.ROUNDS_TO_WIN,
-          );
-        }
-        if (msg.matchOver && winnerIdx >= 0) {
-          setTimeout(() => this.onMatchEnd(winnerIdx), 2500);
-        } else {
-          this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
-        }
-      }
-    });
-
-    this.network.on('superActivated', (msg) => {
-      const fighter = this.fighters[msg.playerIndex];
-      fighter?.applyServerSuperActivation();
-      this.bgm.crossfadeTo('power');
-    });
-
-    this.network.on('gameState', (msg) => {
-      if (this.localPlayerIndex === 1 && msg.state) {
-        const { p1, p2 } = msg.state;
-        if (p1 && this.fighters[0]) this.fighters[0].deserializeState(p1);
-        if (p2 && this.fighters[1]) this.fighters[1].deserializeState(p2);
-        if (msg.state.timer !== undefined) {
-          this.roundTimer = msg.state.timer;
-          this.ui.updateTimer(this.roundTimer);
-        }
-        if (msg.state.round !== undefined) {
-          this.round = msg.state.round;
-        }
-      }
-    });
-
-    this.network.on('opponentLeft', () => {
-      this.stopBGM();
-      this.ui.showAnnouncement('OPPONENT LEFT', '', 3000);
-      setTimeout(() => {
-        this.state = GAME_STATE.MENU;
-        this.ui.showScreen('menu-screen');
-        this.ui.hideFightHud();
-        this.ui.hideAnnouncement();
-      }, 3000);
-    });
-
-    this.network.on('disconnected', () => {
-      if (this.state !== GAME_STATE.MENU && this.state !== GAME_STATE.LOADING) {
-        this.stopBGM();
-        this.ui.showAnnouncement('DISCONNECTED', '', 3000);
-        setTimeout(() => {
-          this.state = GAME_STATE.MENU;
-          this.ui.showScreen('menu-screen');
-          this.ui.hideFightHud();
-        }, 3000);
-      }
-    });
   }
 
   async init() {
@@ -484,7 +323,7 @@ export class Game {
     }, 1100);
   }
 
-  private _startIntroAnimations() {
+  _startIntroAnimations() {
     const f0 = this.fighters[0];
     const f1 = this.fighters[1];
     if (!f0 || !f1) return;
@@ -667,14 +506,14 @@ export class Game {
       defender.onHit(result, attacker.facingAngle);
       this.ui.showHitEffect();
       this.fightCamera.shake(0.15, 0.15);
-      this.spawnHitSpark(defender.position, attacker.facingAngle);
+      this.effects.spawnHitSpark(defender.position, attacker.facingAngle);
       const sfx = move.damage <= 12 ? 'hit_light' : 'hit_heavy';
       this.audio.playAt(sfx, defender.position);
     } else if (result.type === 'blocked') {
       defender.onHit(result, attacker.facingAngle);
       this.ui.showBlockEffect();
       this.fightCamera.shake(0.05, 0.1);
-      this.spawnBlockSpark(defender.position);
+      this.effects.spawnBlockSpark(defender.position);
       this.audio.playAt('block', defender.position);
     }
   }
@@ -864,98 +703,6 @@ export class Game {
   }
 
   // ============================================================
-  // 3D HIT EFFECTS
-  // ============================================================
-
-  _getPooledSpark(mat: StandardMaterial): Mesh {
-    const pooled = this._sparkPool.pop();
-    if (pooled !== undefined) {
-      pooled.material = mat;
-      pooled.setEnabled(true);
-      return pooled;
-    }
-    const spark = this._sparkGeo.clone('spark');
-    spark.material = mat;
-    spark.setEnabled(true);
-    return spark;
-  }
-
-  spawnHitSpark(position: Vector3, attackerFacingAngle: number) {
-    const cosA = Math.cos(attackerFacingAngle);
-    const sinA = Math.sin(attackerFacingAngle);
-    const count = 8;
-    for (let i = 0; i < count; i++) {
-      const mat = (i & 1) === 0 ? this._hitMat0 : this._hitMat1;
-      const spark = this._getPooledSpark(mat);
-      spark.position.set(
-        position.x + cosA * 0.5,
-        position.y + 1.2 + (Math.random() - 0.5) * 0.5,
-        position.z + sinA * 0.5 + (Math.random() - 0.5) * 0.3,
-      );
-      spark.scaling.setAll(1);
-      spark.metadata = {
-        velocity: new Vector3(
-          (Math.random() - 0.3) * 0.15 * cosA,
-          Math.random() * 0.12,
-          (Math.random() - 0.3) * 0.15 * sinA,
-        ),
-        life: 1.0,
-        decay: 0.04 + Math.random() * 0.03,
-        mat,
-      };
-      this.hitParticles.push(spark);
-    }
-  }
-
-  spawnBlockSpark(position: Vector3) {
-    const count = 4;
-    for (let i = 0; i < count; i++) {
-      const spark = this._getPooledSpark(this._blockMat);
-      spark.position.set(
-        position.x,
-        position.y + 1.2 + (Math.random() - 0.5) * 0.3,
-        position.z + (Math.random() - 0.5) * 0.2,
-      );
-      spark.scaling.setAll(0.7);
-      spark.metadata = {
-        velocity: new Vector3(
-          (Math.random() - 0.5) * 0.1,
-          Math.random() * 0.08,
-          (Math.random() - 0.5) * 0.08,
-        ),
-        life: 1.0,
-        decay: 0.06,
-        mat: this._blockMat,
-      };
-      this.hitParticles.push(spark);
-    }
-  }
-
-  updateHitParticles() {
-    for (let i = this.hitParticles.length - 1; i >= 0; i--) {
-      const p = this.hitParticles[i];
-      if (!p) continue;
-      const d = p.metadata as {
-        velocity: Vector3;
-        life: number;
-        decay: number;
-        mat: StandardMaterial;
-      };
-      d.life -= d.decay;
-      d.velocity.y -= 0.005;
-      p.position.addInPlace(d.velocity);
-      d.mat.alpha = d.life;
-      p.scaling.setAll(d.life);
-
-      if (d.life <= 0) {
-        p.setEnabled(false);
-        this._sparkPool.push(p);
-        this.hitParticles.splice(i, 1);
-      }
-    }
-  }
-
-  // ============================================================
   // RENDER
   // ============================================================
 
@@ -972,7 +719,7 @@ export class Game {
 
     if (this.stage) this.stage.update(deltaTime);
 
-    this.updateHitParticles();
+    this.effects.update();
   }
 
   private _onResize() {

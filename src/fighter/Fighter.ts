@@ -23,12 +23,33 @@ import {
   TransformNode,
   Vector3,
 } from '@babylonjs/core';
-import { CombatSystem, type HitResult, type MoveData } from '../combat/CombatSystem';
+import type { HitResult, MoveData } from '../combat/CombatSystem';
 import { MOVES } from '../combat/moves';
 import { FIGHTER_STATE, GAME_CONSTANTS, HIT_RESULT } from '../constants';
 import type { InputState } from '../Input';
 import type { FighterStateSync } from '../Network';
 import { ANIM_CONFIG, ANIM_POOLS, type AnimConfig, type AnimKey, pickRandom } from './animations';
+import {
+  cancelIntro,
+  playIntroAnimation,
+  playIntroAnimationExcluding,
+  setDefeat,
+  setVictory,
+} from './FighterSequences';
+import {
+  handleAirState,
+  handleAttackState,
+  handleCrouchState,
+  handleDashState,
+  handleGetupState,
+  handleJuggleState,
+  handleKnockdownState,
+  handleLandingState,
+  handleRunState,
+  handleSidestepState,
+  handleStandingState,
+  handleStunState,
+} from './FighterStateHandlers';
 
 export interface SharedAssets {
   baseMeshes: AbstractMesh[];
@@ -83,8 +104,8 @@ export class Fighter {
   private _highlightLayer: HighlightLayer | null;
   private _superParticles: ParticleSystem | null;
   private _rootRotY = 0;
-  private _introActive = false;
-  private _introTimeout: ReturnType<typeof setTimeout> | null = null;
+  _introActive = false;
+  _introTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(playerIndex: number, scene: Scene) {
     this.playerIndex = playerIndex;
@@ -467,45 +488,45 @@ export class Fighter {
       case FIGHTER_STATE.IDLE:
       case FIGHTER_STATE.WALK_FORWARD:
       case FIGHTER_STATE.WALK_BACKWARD:
-        this.handleStandingState(relInput);
+        handleStandingState(this, relInput);
         break;
       case FIGHTER_STATE.CROUCH:
       case FIGHTER_STATE.CROUCH_WALK:
-        this.handleCrouchState(relInput);
+        handleCrouchState(this, relInput);
         break;
       case FIGHTER_STATE.JUMP:
       case FIGHTER_STATE.JUMP_FORWARD:
       case FIGHTER_STATE.JUMP_BACKWARD:
       case FIGHTER_STATE.FALLING:
-        this.handleAirState(relInput);
+        handleAirState(this);
         break;
       case FIGHTER_STATE.RUN:
-        this.handleRunState(relInput);
+        handleRunState(this, relInput);
         break;
       case FIGHTER_STATE.ATTACKING:
-        this.handleAttackState(relInput);
+        handleAttackState(this, relInput);
         break;
       case FIGHTER_STATE.HIT_STUN:
       case FIGHTER_STATE.BLOCK_STUN:
-        this.handleStunState(relInput);
+        handleStunState(this, relInput);
         break;
       case FIGHTER_STATE.JUGGLE:
-        this.handleJuggleState();
+        handleJuggleState(this);
         break;
       case FIGHTER_STATE.KNOCKDOWN:
-        this.handleKnockdownState();
+        handleKnockdownState(this);
         break;
       case FIGHTER_STATE.GETUP:
-        this.handleGetupState();
+        handleGetupState(this);
         break;
       case FIGHTER_STATE.SIDESTEP:
-        this.handleSidestepState();
+        handleSidestepState(this);
         break;
       case FIGHTER_STATE.DASH_BACK:
-        this.handleDashState();
+        handleDashState(this);
         break;
       case FIGHTER_STATE.LANDING:
-        this.handleLandingState();
+        handleLandingState(this);
         break;
       case FIGHTER_STATE.VICTORY:
       case FIGHTER_STATE.DEFEAT:
@@ -534,326 +555,6 @@ export class Fighter {
       rel.dashBack = input.dashRight;
     }
     return rel;
-  }
-
-  handleStandingState(input: InputState) {
-    this.isCrouching = false;
-    const wasBlocking = this.isBlocking;
-    this.isBlocking = input.block;
-
-    if (this.isBlocking) {
-      this.velocity.x = 0;
-      this.state = FIGHTER_STATE.IDLE;
-      if (!wasBlocking) {
-        this.playAnimation('block');
-      }
-      return;
-    }
-
-    if (wasBlocking) {
-      this.playAnimation('blockExit');
-    }
-
-    const move = CombatSystem.resolveMove(input, this);
-    if (move) {
-      this.startAttack(move);
-      return;
-    }
-
-    if (input.upJust) {
-      // Physics starts immediately — no input lag
-      this.velocity.y = GC.JUMP_VELOCITY;
-      if (input.forward) {
-        this.velocity.x = GC.JUMP_FORWARD_X;
-        this.state = FIGHTER_STATE.JUMP_FORWARD;
-      } else if (input.back) {
-        this.velocity.x = -GC.JUMP_FORWARD_X;
-        this.state = FIGHTER_STATE.JUMP_BACKWARD;
-      } else {
-        this.state = FIGHTER_STATE.JUMP;
-      }
-      this.isGrounded = false;
-      // Quick anticipation squat (visual only) then transition to jump arc
-      this.playAnimation('jumpSquat', 6.0, 0.05);
-      this.animGroups.jumpSquat?.onAnimationGroupEndObservable.addOnce(() => {
-        if (!this.isGrounded) this.playAnimation('jump');
-      });
-      return;
-    }
-
-    if (input.down) {
-      this.state = FIGHTER_STATE.CROUCH;
-      this.isCrouching = true;
-      if (this.animGroups.crouchEnter) {
-        this.playAnimation('crouchEnter');
-        this.animGroups.crouchEnter.onAnimationGroupEndObservable.addOnce(() => {
-          if (this.isCrouching && this.state === FIGHTER_STATE.CROUCH) {
-            this.playAnimation('crouchIdle');
-          }
-        });
-      } else {
-        this.playAnimation('crouchIdle');
-      }
-      return;
-    }
-
-    if (input.sideStepUp) {
-      this.startSidestep(-1);
-      return;
-    }
-    if (input.sideStepDown) {
-      this.startSidestep(1);
-      return;
-    }
-
-    if (input.dashBack) {
-      this.state = FIGHTER_STATE.DASH_BACK;
-      this.dashTimer = GC.DASH_BACK_FRAMES;
-      this.velocity.x = -GC.DASH_BACK_SPEED;
-      this.playAnimation('runBack');
-      return;
-    }
-
-    if (input.dashForward) {
-      this.state = FIGHTER_STATE.RUN;
-      this.isRunning = true;
-      this.runFrames = 0;
-      this.playAnimation('sprint');
-      return;
-    }
-
-    if (input.forward) {
-      this.velocity.x = GC.WALK_SPEED;
-      this.state = FIGHTER_STATE.WALK_FORWARD;
-      this.playAnimation('walk');
-    } else if (input.back) {
-      this.velocity.x = -GC.BACK_WALK_SPEED;
-      this.state = FIGHTER_STATE.WALK_BACKWARD;
-      this.playAnimation('walkBack');
-    } else {
-      this.velocity.x = 0;
-      if (this.state !== FIGHTER_STATE.IDLE) {
-        this.state = FIGHTER_STATE.IDLE;
-        this.playAnimation('combatIdle');
-      }
-    }
-  }
-
-  handleCrouchState(input: InputState) {
-    this.isCrouching = true;
-    this.isBlocking = input.block;
-
-    if (!input.down) {
-      this.isCrouching = false;
-      this.state = FIGHTER_STATE.IDLE;
-      if (this.animGroups.crouchExit) {
-        this.playAnimation('crouchExit');
-        this.animGroups.crouchExit.onAnimationGroupEndObservable.addOnce(() => {
-          if (!this.isCrouching && this.state === FIGHTER_STATE.IDLE) {
-            this.playAnimation('combatIdle');
-          }
-        });
-      } else {
-        this.playAnimation('combatIdle');
-      }
-      return;
-    }
-
-    const move = CombatSystem.resolveMove(input, this);
-    if (move) {
-      this.startAttack(move);
-      return;
-    }
-
-    if (input.forward) {
-      this.velocity.x = GC.CROUCH_WALK_SPEED;
-      if (
-        this.state !== FIGHTER_STATE.CROUCH_WALK ||
-        this.currentAnimGroup !== this.animGroups.crouchWalk
-      ) {
-        this.state = FIGHTER_STATE.CROUCH_WALK;
-        this.playAnimation('crouchWalk');
-      }
-    } else if (input.back) {
-      this.velocity.x = -GC.CROUCH_WALK_SPEED;
-      if (
-        this.state !== FIGHTER_STATE.CROUCH_WALK ||
-        this.currentAnimGroup !== this.animGroups.crouchWalkBack
-      ) {
-        this.state = FIGHTER_STATE.CROUCH_WALK;
-        this.playAnimation('crouchWalkBack');
-      }
-    } else {
-      this.velocity.x = 0;
-      if (this.state !== FIGHTER_STATE.CROUCH) {
-        this.state = FIGHTER_STATE.CROUCH;
-        this.playAnimation('crouchIdle');
-      }
-    }
-  }
-
-  handleAirState(_input: InputState) {
-    this.velocity.y += GC.GRAVITY;
-
-    if (this.position.y <= GC.GROUND_Y && this.velocity.y <= 0) {
-      this.position.y = GC.GROUND_Y;
-      this.velocity.y = 0;
-      this.velocity.x = 0;
-      this.isGrounded = true;
-      this.state = FIGHTER_STATE.LANDING;
-      this.landingTimer = GC.LANDING_FRAMES;
-      this.playAnimation('landing');
-    }
-  }
-
-  handleRunState(input: InputState) {
-    this.isBlocking = false;
-    this.runFrames++;
-
-    if (input.lpJust || input.rpJust || input.lkJust || input.rkJust) {
-      const move = CombatSystem.resolveMove(input, this);
-      if (move) {
-        this.isRunning = false;
-        this.startAttack(move);
-        return;
-      }
-    }
-
-    if (!input.forward || input.back) {
-      this.isRunning = false;
-      this.state = FIGHTER_STATE.IDLE;
-      this.velocity.x = 0;
-      this.playAnimation('combatIdle');
-      return;
-    }
-
-    this.velocity.x = GC.RUN_SPEED;
-  }
-
-  handleAttackState(input: InputState) {
-    if (!this.currentMove) {
-      this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle');
-      return;
-    }
-
-    this.moveFrame++;
-    const totalFrames =
-      this.currentMove.startupFrames +
-      this.currentMove.activeFrames +
-      this.currentMove.recoveryFrames;
-
-    if (this.currentMove.forwardLunge && this.moveFrame <= this.currentMove.startupFrames) {
-      this.velocity.x = this.currentMove.forwardLunge;
-    } else if (this.moveFrame > this.currentMove.startupFrames + this.currentMove.activeFrames) {
-      this.velocity.x *= 0.9;
-    }
-
-    if (this.moveFrame >= this.currentMove.startupFrames + this.currentMove.activeFrames - 2) {
-      const comboMove = CombatSystem.resolveComboInput(input, this);
-      if (comboMove) {
-        this.startAttack(comboMove, true);
-        return;
-      }
-    }
-
-    if (this.moveFrame >= totalFrames) {
-      this.currentMove = null;
-      this.moveFrame = 0;
-      this.hasHitThisMove = false;
-      this.state = FIGHTER_STATE.IDLE;
-      this.velocity.x = 0;
-      this.playAnimation('combatIdle');
-    }
-  }
-
-  handleStunState(input?: InputState) {
-    this.stunFrames--;
-    if (this.stunFrames <= 0) {
-      this.velocity.x = 0;
-      this.state = FIGHTER_STATE.IDLE;
-      if (input?.block) {
-        this.isBlocking = true;
-        this.playAnimation('block');
-      } else {
-        this.isBlocking = false;
-        this.playAnimation('combatIdle');
-      }
-    }
-    this.velocity.x *= GC.PUSHBACK_DECAY;
-  }
-
-  handleJuggleState() {
-    this.velocity.y += GC.JUGGLE_GRAVITY;
-    this.velocity.x *= 0.98;
-
-    if (this.position.y <= GC.GROUND_Y && this.velocity.y <= 0) {
-      this.position.y = GC.GROUND_Y;
-      this.velocity.y = 0;
-      this.velocity.x = 0;
-      this.state = FIGHTER_STATE.KNOCKDOWN;
-      this.knockdownTimer = 40;
-      this.playAnimation('juggleLand');
-      this.comboTimer = 0;
-    }
-  }
-
-  handleKnockdownState() {
-    if (this.position.y > GC.GROUND_Y || this.velocity.y > 0) {
-      this.velocity.y += GC.JUGGLE_GRAVITY;
-      if (this.position.y <= GC.GROUND_Y && this.velocity.y <= 0) {
-        this.position.y = GC.GROUND_Y;
-        this.velocity.y = 0;
-        this.velocity.x = 0;
-        this.isGrounded = true;
-      }
-    }
-
-    this.knockdownTimer--;
-    if (this.knockdownTimer <= 0) {
-      this.position.y = GC.GROUND_Y;
-      this.velocity.y = 0;
-      this.isGrounded = true;
-      this.state = FIGHTER_STATE.GETUP;
-      this.getupTimer = GC.GETUP_FRAMES;
-      this.playAnimation('kipUp');
-    }
-  }
-
-  handleGetupState() {
-    this.getupTimer--;
-    if (this.getupTimer <= 0) {
-      this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle');
-    }
-  }
-
-  handleSidestepState() {
-    this.sideStepTimer--;
-    this.velocity.z = this.sideStepDir * GC.SIDESTEP_SPEED;
-
-    if (this.sideStepTimer <= 0) {
-      this.velocity.z = 0;
-      this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle');
-    }
-  }
-
-  handleDashState() {
-    this.dashTimer--;
-    if (this.dashTimer <= 0) {
-      this.velocity.x = 0;
-      this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle');
-    }
-  }
-
-  handleLandingState() {
-    this.landingTimer--;
-    if (this.landingTimer <= 0) {
-      this.state = FIGHTER_STATE.IDLE;
-      this.playAnimation('combatIdle');
-    }
   }
 
   startAttack(move: MoveData, isCombo = false) {
@@ -1222,118 +923,22 @@ export class Fighter {
   }
 
   setVictory(animName?: string): string {
-    this.state = FIGHTER_STATE.VICTORY;
-    this.velocity.set(0, 0, 0);
-    const chosen = animName ?? pickRandom(ANIM_POOLS.victory);
-    this.playAnimation(chosen);
-    return chosen;
+    return setVictory(this, animName);
   }
 
   setDefeat(animName?: string, matchOver = false): string {
-    this.state = FIGHTER_STATE.DEFEAT;
-    this.velocity.set(0, 0, 0);
-    let chosen: string;
-    if (animName) {
-      chosen = animName;
-    } else if (matchOver) {
-      // Lost the whole match — they earned the Crying
-      chosen = 'defeatMatch';
-    } else if (this.comboCount >= 3 || this.comboDamage >= GC.MAX_HEALTH * 0.5) {
-      // Ended by a big combo — more dramatic collapse
-      chosen = 'defeatBig';
-    } else {
-      chosen = 'defeat';
-    }
-    this.playAnimation(chosen as AnimKey);
-    return chosen;
+    return setDefeat(this, animName, matchOver);
   }
 
-  // ── Pre-fight intro animations ──────────────────────────────────────────
-
-  // Play a random intro animation. Returns the chosen key so the other player
-  // can call playIntroAnimationExcluding() to guarantee different intros.
   playIntroAnimation(): AnimKey {
-    this.cancelIntro();
-    const chosen = pickRandom(ANIM_POOLS.intro);
-    this._introActive = true;
-    this._playIntroSequence(chosen);
-    return chosen;
+    return playIntroAnimation(this);
   }
 
   playIntroAnimationExcluding(exclude: AnimKey): AnimKey {
-    this.cancelIntro();
-    const filtered = ANIM_POOLS.intro.filter((k) => k !== exclude);
-    const pool = filtered.length > 0 ? filtered : ANIM_POOLS.intro;
-    const chosen = pickRandom(pool);
-    this._introActive = true;
-    this._playIntroSequence(chosen);
-    return chosen;
+    return playIntroAnimationExcluding(this, exclude);
   }
 
-  private _playIntroSequence(key: AnimKey) {
-    // snap = instant cut for the opening frame so there's no idle→intro blend
-    const snap = 1.0;
-    switch (key) {
-      case 'introGroundSitEnter':
-        // Start already sitting — idle first, then stand up before the fight
-        this.playAnimation('introGroundSitIdle', undefined, snap);
-        this._introTimeout = setTimeout(() => {
-          if (!this._introActive) return;
-          this.playAnimation('introGroundSitExit');
-          this.animGroups.introGroundSitExit?.onAnimationGroupEndObservable.addOnce(() => {
-            if (!this._introActive) return;
-            this._introActive = false;
-            this.playAnimation('combatIdle');
-          });
-        }, 1800);
-        break;
-
-      case 'introSpellEnter':
-        this.playAnimation('introSpellEnter', undefined, snap);
-        this.animGroups.introSpellEnter?.onAnimationGroupEndObservable.addOnce(() => {
-          if (!this._introActive) return;
-          this.playAnimation('introSpellIdle');
-          this._introTimeout = setTimeout(() => {
-            if (!this._introActive) return;
-            this.playAnimation('introSpellExit');
-            this.animGroups.introSpellExit?.onAnimationGroupEndObservable.addOnce(() => {
-              if (!this._introActive) return;
-              this._introActive = false;
-              this.playAnimation('combatIdle');
-            });
-          }, 1200);
-        });
-        break;
-
-      case 'introTalking':
-        this.playAnimation('introTalking', undefined, snap);
-        // Loop until countdown ends — cancelIntro() will snap back to idle
-        this._introTimeout = setTimeout(() => {
-          if (!this._introActive) return;
-          this._introActive = false;
-          this.playAnimation('combatIdle');
-        }, 3000);
-        break;
-
-      default:
-        // Single-play: returns to combatIdle automatically when done
-        this.playAnimation(key, undefined, snap);
-        this.animGroups[key]?.onAnimationGroupEndObservable.addOnce(() => {
-          if (!this._introActive) return;
-          this._introActive = false;
-          this.playAnimation('combatIdle');
-        });
-        break;
-    }
-  }
-
-  // Cancel any running intro and immediately return to combat idle.
   cancelIntro() {
-    this._introActive = false;
-    if (this._introTimeout !== null) {
-      clearTimeout(this._introTimeout);
-      this._introTimeout = null;
-    }
-    this.playAnimation('combatIdle', undefined, 0.2);
+    cancelIntro(this);
   }
 }
