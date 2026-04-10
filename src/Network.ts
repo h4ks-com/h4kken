@@ -55,6 +55,12 @@ interface ErrorMsg {
   message: string;
 }
 
+interface OpponentSyncInputMsg {
+  type: 'opponentSyncInput';
+  targetFrame: number;
+  input: InputState;
+}
+
 interface SimpleMsg {
   type: 'waiting' | 'fight' | 'opponentLeft';
 }
@@ -64,6 +70,7 @@ type ServerMessage =
   | MatchedMsg
   | CountdownMsg
   | OpponentInputMsg
+  | OpponentSyncInputMsg
   | GameStateMsg
   | RoundResultMsg
   | SuperActivatedMsg
@@ -116,6 +123,7 @@ type RoundResultOutMsg = {
 type LeaveMsg = { type: 'leave' };
 
 type SuperActivateMsg = { type: 'superActivate'; playerIndex: number };
+type SyncInputMsg = { type: 'syncInput'; targetFrame: number; input: InputState };
 
 type ClientMessage =
   | JoinMsg
@@ -123,6 +131,7 @@ type ClientMessage =
   | GameStateOutMsg
   | RoundResultOutMsg
   | SuperActivateMsg
+  | SyncInputMsg
   | LeaveMsg;
 
 // ── Event handler map ────────────────────────────────────────
@@ -135,6 +144,7 @@ type HandlerMap = {
   matched: (msg: MatchedMsg) => void;
   countdown: (msg: CountdownMsg) => void;
   opponentInput: (msg: OpponentInputMsg) => void;
+  opponentSyncInput: (msg: OpponentSyncInputMsg) => void;
   gameState: (msg: GameStateMsg) => void;
   roundResult: (msg: RoundResultMsg) => void;
   superActivated: (msg: SuperActivatedMsg) => void;
@@ -225,6 +235,9 @@ export class Network {
       case 'opponentInput':
         this.emit('opponentInput', msg);
         break;
+      case 'opponentSyncInput':
+        this.emit('opponentSyncInput', msg);
+        break;
       case 'gameState':
         this.emit('gameState', msg);
         break;
@@ -255,6 +268,10 @@ export class Network {
 
   sendInput(frame: number, input: InputState) {
     this.send({ type: 'input', frame, input });
+  }
+
+  sendSyncInput(targetFrame: number, input: InputState) {
+    this.send({ type: 'syncInput', targetFrame, input });
   }
 
   sendGameState(frame: number, state: GameStateOutMsg['state']) {

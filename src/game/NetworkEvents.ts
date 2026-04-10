@@ -85,10 +85,20 @@ export function setupNetworkEvents(game: Game): void {
     game._roundResetting = false;
   });
 
+  // Delay-based sync: feed opponent's frame-tagged input into the buffer
+  game.network.on('opponentSyncInput', (msg) => {
+    game.inputSyncBuffer?.addRemoteInput(msg.targetFrame, msg.input);
+  });
+
+  // Legacy handler kept for backward compat during migration
   game.network.on('opponentInput', (msg) => {
     game.pendingOpponentInput = msg.input;
   });
 
+  // With delay-based sync both clients detect KO/time-up locally at the same
+  // frame, so by the time the server's confirmation arrives the state is already
+  // ROUND_END. This handler is a defensive fallback — it only fires if the
+  // local simulation somehow hasn't transitioned yet.
   game.network.on('roundResult', (msg) => {
     if (game.state === GAME_STATE.FIGHTING) {
       game.state = GAME_STATE.ROUND_END;
@@ -113,45 +123,17 @@ export function setupNetworkEvents(game: Game): void {
       }
       if (msg.matchOver && winnerIdx >= 0) {
         setTimeout(() => game.onMatchEnd(winnerIdx), 2500);
-      } else {
-        game._nextRoundTimeout = setTimeout(() => game.startNextRound(), 3000);
       }
     }
   });
 
+  // With input sync, both clients activate super at the same frame locally.
+  // This handler is a fallback — only apply if the fighter isn't already active.
   game.network.on('superActivated', (msg) => {
     const fighter = game.fighters[msg.playerIndex];
-    fighter?.applyServerSuperActivation();
-    game.bgm.crossfadeTo('power');
-  });
-
-  game.network.on('gameState', (msg) => {
-    if (game.localPlayerIndex === 1 && msg.state) {
-      const { p1, p2 } = msg.state;
-      // Sync the remote fighter (P1) fully — we have no local knowledge of P1's position
-      if (p1 && game.fighters[0]) game.fighters[0].deserializeState(p1);
-      // For P2's own fighter, only accept authoritative combat results from P1.
-      // Skipping position/velocity/animation prevents P1's stale snapshot from
-      // rubber-banding P2's character back to where it was RTT/2 ms ago.
-      if (p2 && game.fighters[1]) {
-        const f = game.fighters[1];
-        f.health = p2.health;
-        f.wins = p2.wins;
-        f.stunFrames = p2.stunFrames;
-        f.comboCount = p2.comboCount;
-        f.comboDamage = p2.comboDamage;
-        f.superMeter = p2.superMeter;
-        if (p2.superPowerActive !== f.superPowerActive) {
-          f.superPowerActive = p2.superPowerActive;
-        }
-      }
-      if (msg.state.timer !== undefined) {
-        game.roundTimer = msg.state.timer;
-        game.ui.updateTimer(game.roundTimer);
-      }
-      if (msg.state.round !== undefined) {
-        game.round = msg.state.round;
-      }
+    if (fighter && !fighter.superPowerActive) {
+      fighter.applyServerSuperActivation();
+      game.bgm.crossfadeTo('power');
     }
   });
 

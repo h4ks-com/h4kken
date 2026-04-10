@@ -23,6 +23,7 @@ import { Stage } from '../Stage';
 import { UI } from '../UI';
 import { BotAI } from './BotAI';
 import { EffectsManager } from './EffectsManager';
+import { InputSyncBuffer } from './InputSyncBuffer';
 import { setupNetworkEvents } from './NetworkEvents';
 
 const GC = GAME_CONSTANTS;
@@ -61,6 +62,8 @@ export class Game {
   tickDuration: number;
   accumulator: number;
   frame: number;
+  inputSyncBuffer: InputSyncBuffer | null;
+  private captureFrame: number;
   pendingOpponentInput: InputState | null;
   lastOpponentInput: InputState;
   audio: AudioManager;
@@ -129,6 +132,8 @@ export class Game {
     this.tickDuration = 1 / this.tickRate;
     this.accumulator = 0;
     this.frame = 0;
+    this.inputSyncBuffer = null;
+    this.captureFrame = 0;
 
     this.pendingOpponentInput = null;
     this.lastOpponentInput = this.emptyInput();
@@ -258,6 +263,14 @@ export class Game {
     this.ui.updateTimer(this.roundTimer);
     setTimeout(() => this.playBGM(), 1000);
     this.fightCamera.reset();
+    this.captureFrame = 0;
+    if (!this.isPractice) {
+      this.inputSyncBuffer = new InputSyncBuffer(this.localPlayerIndex as 0 | 1, 3);
+      this.frame = this.inputSyncBuffer.inputDelay;
+    } else {
+      this.inputSyncBuffer = null;
+      this.frame = 0;
+    }
     this.state = GAME_STATE.COUNTDOWN;
   }
 
@@ -336,35 +349,81 @@ export class Game {
   // ============================================================
 
   private _gameLoop() {
-    // engine.getDeltaTime() returns ms; convert to seconds
     const deltaTime = Math.min(this.engine.getDeltaTime() / 1000, 0.05);
     this.accumulator += deltaTime;
 
     while (this.accumulator >= this.tickDuration) {
-      this.fixedUpdate();
       this.accumulator -= this.tickDuration;
-      this.frame++;
+      if (this.isPractice || !this.inputSyncBuffer) {
+        this._fixedUpdatePractice();
+        this.frame++;
+      } else {
+        this._captureInput();
+        this._tryAdvanceSimulation();
+      }
     }
 
     this.render(deltaTime);
     this.scene.render();
   }
 
-  fixedUpdate() {
+  // Practice / legacy path: immediate input, no network sync
+  private _fixedUpdatePractice() {
     const rawInput = this.input.update();
-
     if (this.state !== GAME_STATE.FIGHTING && this.state !== GAME_STATE.PRACTICE) return;
 
     const f1 = this.fighters[0];
     const f2 = this.fighters[1];
     if (!f1 || !f2) return;
 
-    const [p1Input, p2Input] = this.buildInputs(rawInput);
+    const p2Input = this.botAI.getInput(f2, f1);
+    this._runSimulationStep(rawInput, p2Input);
+  }
+
+  // Multiplayer: capture local input, tag for future sim frame, send to opponent
+  private _captureInput() {
+    // Always pump InputManager so tap/hold timing is accurate even when stalling
+    const rawInput = this.input.update();
+    if (this.state !== GAME_STATE.FIGHTING || !this.inputSyncBuffer) return;
+
+    const targetFrame = this.inputSyncBuffer.addLocalInput(this.captureFrame, rawInput);
+    this.network.sendSyncInput(targetFrame, this.serializeInput(rawInput));
+    this.captureFrame++;
+  }
+
+  // Multiplayer: advance simulation for all frames whose inputs are ready
+  private _tryAdvanceSimulation() {
+    if (this.state !== GAME_STATE.FIGHTING || !this.inputSyncBuffer) return;
+
+    const maxCatchup = this.inputSyncBuffer.inputDelay + 6;
+    let steps = 0;
+    while (steps < maxCatchup) {
+      const inputs = this.inputSyncBuffer.getInputsForFrame(this.frame);
+      if (!inputs) break;
+      this._runSimulationStep(inputs[0], inputs[1]);
+      this.frame++;
+      steps++;
+      if (this.frame % 60 === 0) this.inputSyncBuffer.prune(this.frame - 120);
+    }
+  }
+
+  // Core simulation step shared by practice and multiplayer
+  private _runSimulationStep(p1Input: InputState, p2Input: InputState) {
+    const f1 = this.fighters[0];
+    const f2 = this.fighters[1];
+    if (!f1 || !f2) return;
 
     f1.processInput(p1Input, f2.position);
     f2.processInput(p2Input, f1.position);
 
-    this._flushPendingSuperActivations();
+    // In delay-based sync both clients see superJust at the same frame, so
+    // super activation is applied directly on both sides (same as practice).
+    for (const fighter of this.fighters) {
+      if (!fighter?._pendingSuperActivation || fighter.superPowerActive) continue;
+      fighter._pendingSuperActivation = false;
+      fighter.applyServerSuperActivation();
+      this.bgm.crossfadeTo('power');
+    }
 
     const f1Active = f1.isAttackActive();
     const f2Active = f2.isAttackActive();
@@ -382,10 +441,7 @@ export class Game {
         this.roundTimerAccum -= 1.0;
         this.roundTimer--;
         this.ui.updateTimer(this.roundTimer);
-
-        if (this.roundTimer <= 0) {
-          this.onTimeUp();
-        }
+        if (this.roundTimer <= 0) this.onTimeUp();
       }
     }
 
@@ -411,72 +467,6 @@ export class Game {
     } else {
       this.ui.hideCombo(1);
     }
-
-    if (!this.isPractice && this.localPlayerIndex === 0 && this.frame % 6 === 0) {
-      this.network.sendGameState(this.frame, {
-        p1: f1.serializeState(),
-        p2: f2.serializeState(),
-        timer: this.roundTimer,
-        round: this.round,
-      });
-    }
-  }
-
-  private _flushPendingSuperActivations() {
-    for (const fighter of this.fighters) {
-      if (!fighter?._pendingSuperActivation || fighter.superPowerActive) continue;
-      fighter._pendingSuperActivation = false;
-      if (this.isPractice) {
-        fighter.applyServerSuperActivation();
-        this.bgm.crossfadeTo('power');
-      } else {
-        this.network.sendSuperActivate(fighter.playerIndex);
-      }
-    }
-  }
-
-  private buildInputs(rawInput: InputState): [InputState, InputState] {
-    let p1Input: InputState;
-    let p2Input: InputState;
-
-    if (this.isPractice) {
-      const f2 = this.fighters[1];
-      const f1 = this.fighters[0];
-      p1Input = rawInput;
-      p2Input = f1 && f2 ? this.botAI.getInput(f2, f1) : this.emptyInput();
-    } else {
-      const opponentHeld = { ...this.lastOpponentInput };
-      opponentHeld.upJust = false;
-      opponentHeld.downJust = false;
-      opponentHeld.leftJust = false;
-      opponentHeld.rightJust = false;
-      opponentHeld.lpJust = false;
-      opponentHeld.rpJust = false;
-      opponentHeld.lkJust = false;
-      opponentHeld.rkJust = false;
-      opponentHeld.dashLeft = false;
-      opponentHeld.dashRight = false;
-      opponentHeld.sideStepUp = false;
-      opponentHeld.sideStepDown = false;
-
-      const opInput = this.pendingOpponentInput || opponentHeld;
-      if (this.pendingOpponentInput) {
-        this.lastOpponentInput = { ...this.pendingOpponentInput };
-        this.pendingOpponentInput = null;
-      }
-
-      if (this.localPlayerIndex === 0) {
-        p1Input = rawInput;
-        p2Input = opInput;
-        this.network.sendInput(this.frame, this.serializeInput(rawInput));
-      } else {
-        p1Input = opInput;
-        p2Input = rawInput;
-        this.network.sendInput(this.frame, this.serializeInput(rawInput));
-      }
-    }
-
-    return [p1Input, p2Input];
   }
 
   resolveCombat(attacker: Fighter, defender: Fighter) {
@@ -589,7 +579,8 @@ export class Game {
       GC.ROUNDS_TO_WIN,
     );
 
-    if (!this.isPractice && this.localPlayerIndex === 0) {
+    // Both clients detect KO at the same sim frame — both send round result
+    if (!this.isPractice) {
       this.network.sendRoundResult(
         winnerIdx,
         this.fighters[0]?.wins ?? 0,
@@ -602,9 +593,8 @@ export class Game {
 
     if (matchOver) {
       setTimeout(() => this.onMatchEnd(winnerIdx), 2500);
-    } else {
-      this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
     }
+    // No _nextRoundTimeout — server drives the next countdown
   }
 
   onTimeUp() {
@@ -620,11 +610,10 @@ export class Game {
     } else if (f2.health > f1.health) {
       winnerIdx = 1;
     } else {
-      if (!this.isPractice && this.localPlayerIndex === 0) {
+      if (!this.isPractice) {
         this.network.sendRoundResult(-1, f1.wins, f2.wins, false, '', '');
       }
       this.ui.showAnnouncement('DRAW', 'TIME UP', 2000);
-      this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
       return;
     }
 
@@ -643,7 +632,7 @@ export class Game {
       GC.ROUNDS_TO_WIN,
     );
 
-    if (!this.isPractice && this.localPlayerIndex === 0) {
+    if (!this.isPractice) {
       this.network.sendRoundResult(
         winnerIdx,
         this.fighters[0]?.wins ?? 0,
@@ -656,8 +645,6 @@ export class Game {
 
     if (matchOver) {
       setTimeout(() => this.onMatchEnd(winnerIdx), 2500);
-    } else {
-      this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
     }
   }
 
@@ -696,6 +683,13 @@ export class Game {
     this.ui.setPowerMode(false, false);
     this.bgm.crossfadeTo('main');
     this.fightCamera.reset();
+
+    // Reset input sync state for the new round
+    if (this.inputSyncBuffer) {
+      this.inputSyncBuffer.reset();
+      this.captureFrame = 0;
+      this.frame = this.inputSyncBuffer.inputDelay;
+    }
 
     if (this.isPractice) {
       this.startPracticeCountdown();

@@ -37,12 +37,15 @@ interface ClientMessage {
   type: string;
   name?: string;
   frame?: number;
+  targetFrame?: number;
   input?: unknown;
   state?: unknown;
   winner?: number;
   p1Wins?: number;
   p2Wins?: number;
   matchOver?: boolean;
+  victoryAnim?: string;
+  defeatAnim?: string;
   playerIndex?: number;
 }
 
@@ -54,6 +57,8 @@ interface Room {
   state: 'countdown' | 'fighting' | 'roundEnd' | 'matchEnd';
   countdownTimer: ReturnType<typeof setTimeout> | null;
   superMeters: [number, number];
+  pendingRoundResults: [ClientMessage | null, ClientMessage | null];
+  roundResultTimeout: ReturnType<typeof setTimeout> | null;
 }
 
 const waitingPlayers: PlayerInfo[] = [];
@@ -74,6 +79,8 @@ function createRoom(player1: PlayerInfo, player2: PlayerInfo): Room {
     state: 'countdown',
     countdownTimer: null,
     superMeters: [0, 0],
+    pendingRoundResults: [null, null],
+    roundResultTimeout: null,
   };
   rooms.set(roomId, room);
   player1.roomId = roomId;
@@ -95,6 +102,7 @@ function destroyRoom(roomId: string) {
   });
 
   if (room.countdownTimer) clearTimeout(room.countdownTimer);
+  if (room.roundResultTimeout) clearTimeout(room.roundResultTimeout);
   rooms.delete(roomId);
 }
 
@@ -177,6 +185,21 @@ function handleInput(playerInfo: PlayerInfo, msg: ClientMessage) {
   });
 }
 
+function handleSyncInput(playerInfo: PlayerInfo, msg: ClientMessage) {
+  if (!playerInfo.roomId) return;
+  const room = rooms.get(playerInfo.roomId);
+  if (!room || room.state !== 'fighting') return;
+
+  const opponentIdx = playerInfo.playerIndex === 0 ? 1 : 0;
+  const opponent = room.players[opponentIdx];
+
+  sendTo(opponent, {
+    type: 'opponentSyncInput',
+    targetFrame: msg.targetFrame,
+    input: msg.input,
+  });
+}
+
 function handleGameState(playerInfo: PlayerInfo, msg: ClientMessage) {
   if (!playerInfo.roomId || playerInfo.playerIndex !== 0) return;
   const room = rooms.get(playerInfo.roomId);
@@ -211,26 +234,57 @@ function handleSuperActivate(playerInfo: PlayerInfo, msg: ClientMessage) {
   broadcastToRoom(room, { type: 'superActivated', playerIndex: idx });
 }
 
-function handleRoundResult(playerInfo: PlayerInfo, msg: ClientMessage) {
-  if (!playerInfo.roomId) return;
-  const room = rooms.get(playerInfo.roomId);
-  if (!room) return;
-
-  if (room.state !== 'fighting') return;
+function finishRound(room: Room, result: ClientMessage) {
   room.state = 'roundEnd';
-
+  if (room.roundResultTimeout) {
+    clearTimeout(room.roundResultTimeout);
+    room.roundResultTimeout = null;
+  }
   broadcastToRoom(room, {
     type: 'roundResult',
-    winner: msg.winner,
-    p1Wins: msg.p1Wins,
-    p2Wins: msg.p2Wins,
+    winner: result.winner,
+    p1Wins: result.p1Wins,
+    p2Wins: result.p2Wins,
+    matchOver: result.matchOver ?? false,
+    victoryAnim: result.victoryAnim ?? '',
+    defeatAnim: result.defeatAnim ?? '',
   });
+  room.pendingRoundResults = [null, null];
 
-  if (msg.matchOver) {
+  if (result.matchOver) {
     room.state = 'matchEnd';
     setTimeout(() => destroyRoom(room.id), 5000);
   } else {
     setTimeout(() => startCountdown(room), 3000);
+  }
+}
+
+function handleSyncRoundResult(playerInfo: PlayerInfo, msg: ClientMessage) {
+  if (!playerInfo.roomId) return;
+  const room = rooms.get(playerInfo.roomId);
+  if (!room || room.state !== 'fighting') return;
+
+  const idx = playerInfo.playerIndex ?? -1;
+  if (idx < 0 || idx > 1) return;
+  room.pendingRoundResults[idx] = msg;
+
+  const r0 = room.pendingRoundResults[0];
+  const r1 = room.pendingRoundResults[1];
+
+  if (r0 && r1) {
+    // Both arrived — use first player's result (they should agree)
+    if (r0.winner !== r1.winner) {
+      console.warn(`[DESYNC] Room ${room.id}: P1 winner=${r0.winner}, P2 winner=${r1.winner}`);
+    }
+    finishRound(room, r0);
+  } else if (!room.roundResultTimeout) {
+    // First result — wait up to 2s for the other
+    room.roundResultTimeout = setTimeout(() => {
+      const result = room.pendingRoundResults[0] || room.pendingRoundResults[1];
+      if (result && room.state === 'fighting') {
+        finishRound(room, result);
+      }
+    }, 2000);
   }
 }
 
@@ -284,11 +338,14 @@ wss.on('connection', (ws) => {
       case 'input':
         handleInput(playerInfo, msg);
         break;
+      case 'syncInput':
+        handleSyncInput(playerInfo, msg);
+        break;
       case 'gameState':
         handleGameState(playerInfo, msg);
         break;
       case 'roundResult':
-        handleRoundResult(playerInfo, msg);
+        handleSyncRoundResult(playerInfo, msg);
         break;
       case 'superActivate':
         handleSuperActivate(playerInfo, msg);
