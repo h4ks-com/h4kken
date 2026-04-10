@@ -12,7 +12,6 @@ import {
   Color3,
   Color4,
   DynamicTexture,
-  GlowLayer,
   HighlightLayer,
   type Mesh,
   ParticleSystem,
@@ -104,7 +103,7 @@ export class Fighter {
   currentAnimKey: string;
   onSuperDeactivate: (() => void) | null = null;
   private _highlightLayer: HighlightLayer | null;
-  private _glowLayer: GlowLayer | null;
+  private _shimmerActive = false;
   private _superParticles: ParticleSystem | null;
   private _superCoreParticles: ParticleSystem | null;
   private _rootRotY = 0;
@@ -166,7 +165,7 @@ export class Fighter {
     this._pendingSuperActivation = false;
     this.currentAnimKey = '';
     this._highlightLayer = null;
-    this._glowLayer = null;
+    this._shimmerActive = false;
     this._superParticles = null;
     this._superCoreParticles = null;
   }
@@ -337,10 +336,19 @@ export class Fighter {
     const ctx = tex.getContext() as CanvasRenderingContext2D;
     const cx = size / 2;
     const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
-    grad.addColorStop(0.0, 'rgba(255,255,255,1)');
-    grad.addColorStop(0.2, 'rgba(255,220,80,0.9)');
-    grad.addColorStop(0.55, 'rgba(255,80,10,0.5)');
-    grad.addColorStop(1.0, 'rgba(200,0,0,0)');
+    // P1 uses a white/neutral texture so the blue color gradients are not tinted by baked-in orange.
+    // P2 keeps the fire-orange texture for a natural flame look.
+    if (this.playerIndex === 0) {
+      grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.3, 'rgba(220,235,255,0.9)');
+      grad.addColorStop(0.6, 'rgba(180,210,255,0.5)');
+      grad.addColorStop(1.0, 'rgba(150,190,255,0)');
+    } else {
+      grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.2, 'rgba(255,220,80,0.9)');
+      grad.addColorStop(0.55, 'rgba(255,80,10,0.5)');
+      grad.addColorStop(1.0, 'rgba(200,0,0,0)');
+    }
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
     tex.update();
@@ -358,12 +366,6 @@ export class Fighter {
     const hlColor = isP1 ? new Color3(0.4, 0.8, 1.0) : new Color3(1.0, 0.55, 0.0);
     for (const mesh of this.meshes) hl.addMesh(mesh as Mesh, hlColor);
     this._highlightLayer = hl;
-
-    // Scene-wide bloom that intensifies the additive particles
-    const gl = new GlowLayer(`superGL_${this.playerIndex}`, this.scene);
-    gl.isEnabled = false;
-    gl.intensity = 1.2;
-    this._glowLayer = gl;
 
     const fireTex = this._createFireParticleTexture();
     const pos = this.rootNode.position; // Vector3 ref — updated every frame
@@ -438,7 +440,7 @@ export class Fighter {
 
   private _destroySuperEffects() {
     if (this._highlightLayer) this._highlightLayer.isEnabled = false;
-    if (this._glowLayer) this._glowLayer.isEnabled = false;
+    this._shimmerActive = false;
     this._superParticles?.stop();
     this._superCoreParticles?.stop();
   }
@@ -456,7 +458,7 @@ export class Fighter {
     this._superWasActivatedThisRound = true;
     this._pendingSuperActivation = false;
     if (this._highlightLayer) this._highlightLayer.isEnabled = true;
-    if (this._glowLayer) this._glowLayer.isEnabled = true;
+    this._shimmerActive = false;
     this._superParticles?.start();
     this._superCoreParticles?.start();
     if (this.animGroups.superActivate) {
@@ -837,12 +839,26 @@ export class Fighter {
       this.rootNode.position.z -= Math.sin(this.facingAngle) * 0.05;
     }
 
-    if (this.superPowerActive && this._highlightLayer) {
+    if (this._highlightLayer) {
       const t = Date.now();
-      const pulse = 0.6 + 0.5 * Math.sin(t / 200);
-      this._highlightLayer.blurHorizontalSize = pulse;
-      this._highlightLayer.blurVerticalSize = pulse;
-      if (this._glowLayer) this._glowLayer.intensity = 0.7 + 0.6 * Math.sin(t / 180);
+      if (this.superPowerActive) {
+        // Active: strong pulsing highlight
+        const pulse = 0.6 + 0.5 * Math.sin(t / 200);
+        this._highlightLayer.blurHorizontalSize = pulse;
+        this._highlightLayer.blurVerticalSize = pulse;
+      } else {
+        // Available (meter full): subtle slow shimmer, no flames
+        const available = this.superMeter >= GC.SUPER_MAX && !this._pendingSuperActivation;
+        if (available !== this._shimmerActive) {
+          this._shimmerActive = available;
+          this._highlightLayer.isEnabled = available;
+        }
+        if (available) {
+          const shimmer = 0.2 + 0.12 * Math.sin(t / 700);
+          this._highlightLayer.blurHorizontalSize = shimmer;
+          this._highlightLayer.blurVerticalSize = shimmer;
+        }
+      }
     }
   }
 
@@ -912,7 +928,6 @@ export class Fighter {
       this.superPowerActive = data.superPowerActive;
       if (this.superPowerActive) {
         if (this._highlightLayer) this._highlightLayer.isEnabled = true;
-        if (this._glowLayer) this._glowLayer.isEnabled = true;
         this._superParticles?.start();
         this._superCoreParticles?.start();
       } else {

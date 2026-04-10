@@ -36,6 +36,8 @@ export class UI {
   playerNameInput: HTMLInputElement | null;
   p1Super: HTMLElement | null;
   p2Super: HTMLElement | null;
+  p1SuperWrapper: HTMLElement | null;
+  p2SuperWrapper: HTMLElement | null;
   p1HealthTarget: number;
   p2HealthTarget: number;
   p1HealthDamageTarget: number;
@@ -81,6 +83,8 @@ export class UI {
 
     this.p1Super = document.getElementById('p1-super');
     this.p2Super = document.getElementById('p2-super');
+    this.p1SuperWrapper = document.getElementById('p1-super-wrapper');
+    this.p2SuperWrapper = document.getElementById('p2-super-wrapper');
 
     this.p1HealthTarget = 100;
     this.p2HealthTarget = 100;
@@ -232,14 +236,18 @@ export class UI {
   }
 
   updateSuper(p1: number, p2: number, max: number) {
+    const p1Full = p1 >= max;
+    const p2Full = p2 >= max;
     if (this.p1Super) {
       this.p1Super.style.width = `${Math.min(100, (p1 / max) * 100)}%`;
-      this.p1Super.classList.toggle('super-full', p1 >= max);
+      this.p1Super.classList.toggle('super-full', p1Full);
     }
     if (this.p2Super) {
       this.p2Super.style.width = `${Math.min(100, (p2 / max) * 100)}%`;
-      this.p2Super.classList.toggle('super-full', p2 >= max);
+      this.p2Super.classList.toggle('super-full', p2Full);
     }
+    this.p1SuperWrapper?.classList.toggle('super-ready', p1Full);
+    this.p2SuperWrapper?.classList.toggle('super-ready', p2Full);
   }
 
   showBlockEffect() {

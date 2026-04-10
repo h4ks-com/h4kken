@@ -556,6 +556,34 @@ html, body {
   50%       { opacity: 0.75; box-shadow: 0 0 14px #ff6622; }
 }
 
+.super-key-hint {
+  display: none;
+  font-size: 14px;
+  text-align: center;
+  letter-spacing: 2px;
+  margin-top: 3px;
+  font-weight: 900;
+  text-shadow: 0 0 6px currentColor;
+}
+
+.super-bar-wrapper.super-ready .super-key-hint {
+  display: block;
+  animation: super-key-pulse 0.9s ease-in-out infinite;
+}
+
+.p1-super-bar.super-ready .super-key-hint {
+  color: #66ddff;
+}
+
+.p2-super-bar.super-ready .super-key-hint {
+  color: #ff8844;
+}
+
+@keyframes super-key-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50%       { opacity: 1;   transform: scale(1.15); }
+}
+
 .super-spacer {
   width: 70px;
   flex-shrink: 0;
