@@ -17,6 +17,87 @@ const FLAT_OPTS = {
   spatialSound: false,
 } as const;
 
+const BGM_OPTS = {
+  loop: true,
+  autoplay: false,
+  spatialSound: false,
+} as const;
+
+const BGM_MASTER_VOL = 0.5;
+const BGM_POWER_VOL = BGM_MASTER_VOL * 1.2;
+const BGM_FADE_SEC = 0.4;
+
+// Both tracks run simultaneously at all times. Crossfading is just volume ramping —
+// the tracks never stop, so they stay perfectly time-aligned across loops.
+export class BgmManager {
+  private _main: Sound | null = null;
+  private _power: Sound | null = null;
+  private _active: 'main' | 'power' = 'main';
+  private _playing = false;
+
+  async load(scene: Scene): Promise<void> {
+    await Promise.all([
+      new Promise<void>((resolve) => {
+        this._main = new Sound('bgm_main', '/assets/music/h4kken-m.mp3', scene, resolve, BGM_OPTS);
+      }),
+      new Promise<void>((resolve) => {
+        this._power = new Sound(
+          'bgm_power',
+          '/assets/music/h4kken-power.mp3',
+          scene,
+          resolve,
+          BGM_OPTS,
+        );
+      }),
+    ]);
+  }
+
+  play() {
+    if (this._playing) return;
+    this._playing = true;
+    this._active = 'main';
+    // Volumes set before play() so the gain node is correct from the first sample
+    this._main?.setVolume(BGM_MASTER_VOL);
+    this._power?.setVolume(0);
+    // Start both at once — they will stay frame-aligned for the whole session
+    this._main?.play();
+    this._power?.play();
+  }
+
+  stop() {
+    if (!this._playing) return;
+    this._playing = false;
+    this._active = 'main'; // next play() always restarts on main
+    this._main?.stop();
+    this._power?.stop();
+  }
+
+  // Fade to a different track. Both tracks keep playing; only gain changes.
+  // Sound.setVolume(v, sec) calls Web Audio linearRampToValueAtTime under the hood.
+  crossfadeTo(track: 'main' | 'power', fadeSec = BGM_FADE_SEC) {
+    if (!this._playing || this._active === track) return;
+    this._active = track;
+    const [fadeOut, fadeIn] =
+      track === 'power' ? [this._main, this._power] : [this._power, this._main];
+    const targetVol = track === 'power' ? BGM_POWER_VOL : BGM_MASTER_VOL;
+    fadeOut?.setVolume(0, fadeSec);
+    fadeIn?.setVolume(targetVol, fadeSec);
+  }
+
+  get activeTrack(): 'main' | 'power' {
+    return this._active;
+  }
+
+  get isPlaying(): boolean {
+    return this._playing;
+  }
+
+  // TODO delete — dev keybind to test crossfade
+  toggleForTest() {
+    this.crossfadeTo(this._active === 'main' ? 'power' : 'main');
+  }
+}
+
 const MANIFEST: Record<string, { files: string[]; spatial: boolean }> = {
   hit_heavy: {
     spatial: true,

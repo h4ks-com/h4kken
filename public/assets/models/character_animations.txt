@@ -1,5 +1,6 @@
 Animation Reference — H4KKEN
 Same 65-bone Quaternius Universal Rig — animations from either GLB play on character.glb
+https://quaternius.com/animviewer.html
 
 =============================================================
 UAL1  character.glb  (127 animations)

@@ -2,7 +2,7 @@
 // H4KKEN - Entry Point
 // ============================================================
 
-import { Game } from './Game';
+import { Game } from './game/Game';
 
 const game = new Game();
 
