@@ -190,19 +190,23 @@ function handleInput(playerInfo: PlayerInfo, msg: ClientMessage) {
   });
 }
 
-function handleSyncInput(playerInfo: PlayerInfo, msg: ClientMessage) {
+const OP_SYNC_INPUT = 0x01;
+const OP_OPPONENT_SYNC_INPUT = 0x02;
+
+function handleBinarySyncInput(playerInfo: PlayerInfo, data: Buffer) {
   if (!playerInfo.roomId) return;
   const room = rooms.get(playerInfo.roomId);
   if (!room || room.state !== 'fighting') return;
 
   const opponentIdx = playerInfo.playerIndex === 0 ? 1 : 0;
   const opponent = room.players[opponentIdx];
+  if (!opponent?.ws || opponent.ws.readyState !== 1) return;
 
-  sendTo(opponent, {
-    type: 'opponentSyncInput',
-    targetFrame: msg.targetFrame,
-    input: msg.input,
-  });
+  // Zero-copy relay: copy buffer and flip opcode byte
+  const relay = Buffer.allocUnsafe(8);
+  data.copy(relay);
+  relay[0] = OP_OPPONENT_SYNC_INPUT;
+  opponent.ws.send(relay);
 }
 
 function handleGameState(playerInfo: PlayerInfo, msg: ClientMessage) {
@@ -329,6 +333,12 @@ wss.on('connection', (ws) => {
   };
 
   ws.on('message', (data) => {
+    // Binary fast-path: syncInput (8 bytes, opcode 0x01)
+    if (Buffer.isBuffer(data) && data.length === 8 && data[0] === OP_SYNC_INPUT) {
+      handleBinarySyncInput(playerInfo, data);
+      return;
+    }
+
     let msg: ClientMessage;
     try {
       msg = JSON.parse(data.toString()) as ClientMessage;
@@ -342,9 +352,6 @@ wss.on('connection', (ws) => {
         break;
       case 'input':
         handleInput(playerInfo, msg);
-        break;
-      case 'syncInput':
-        handleSyncInput(playerInfo, msg);
         break;
       case 'gameState':
         handleGameState(playerInfo, msg);

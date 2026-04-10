@@ -2,6 +2,7 @@
 // H4KKEN - Network Client
 // ============================================================
 
+import { decodeSyncInput, encodeSyncInput, OP } from './game/InputCodec';
 import type { InputState } from './Input';
 
 // ── Inbound messages (server → client) ──────────────────────
@@ -208,11 +209,24 @@ export class Network {
         reject(err);
       };
 
+      this.ws.binaryType = 'arraybuffer';
       this.ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          this.handleBinaryMessage(event.data);
+          return;
+        }
         const msg = JSON.parse(event.data as string) as ServerMessage;
         this.handleMessage(msg);
       };
     });
+  }
+
+  private handleBinaryMessage(buf: ArrayBuffer) {
+    const opcode = new DataView(buf).getUint8(0);
+    if (opcode === OP.OPPONENT_SYNC_INPUT) {
+      const { targetFrame, input } = decodeSyncInput(buf);
+      this.emit('opponentSyncInput', { type: 'opponentSyncInput', targetFrame, input });
+    }
   }
 
   private handleMessage(msg: ServerMessage) {
@@ -271,7 +285,9 @@ export class Network {
   }
 
   sendSyncInput(targetFrame: number, input: InputState) {
-    this.send({ type: 'syncInput', targetFrame, input });
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(encodeSyncInput(targetFrame, input));
+    }
   }
 
   sendGameState(frame: number, state: GameStateOutMsg['state']) {
