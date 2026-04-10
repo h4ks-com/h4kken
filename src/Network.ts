@@ -106,12 +106,6 @@ export interface FighterStateSync {
 // ── Outbound messages (client → server) ─────────────────────
 
 type JoinMsg = { type: 'join'; name: string };
-type InputMsg = { type: 'input'; frame: number; input: InputState };
-type GameStateOutMsg = {
-  type: 'gameState';
-  frame: number;
-  state: { p1: FighterStateSync; p2: FighterStateSync; timer: number; round: number };
-};
 type RoundResultOutMsg = {
   type: 'roundResult';
   winner: number;
@@ -123,17 +117,7 @@ type RoundResultOutMsg = {
 };
 type LeaveMsg = { type: 'leave' };
 
-type SuperActivateMsg = { type: 'superActivate'; playerIndex: number };
-type SyncInputMsg = { type: 'syncInput'; targetFrame: number; input: InputState };
-
-type ClientMessage =
-  | JoinMsg
-  | InputMsg
-  | GameStateOutMsg
-  | RoundResultOutMsg
-  | SuperActivateMsg
-  | SyncInputMsg
-  | LeaveMsg;
+type ClientMessage = JoinMsg | RoundResultOutMsg | LeaveMsg;
 
 // ── Event handler map ────────────────────────────────────────
 
@@ -280,22 +264,10 @@ export class Network {
     this.send({ type: 'join', name });
   }
 
-  sendInput(frame: number, input: InputState) {
-    this.send({ type: 'input', frame, input });
-  }
-
   sendSyncInput(targetFrame: number, input: InputState) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(encodeSyncInput(targetFrame, input));
     }
-  }
-
-  sendGameState(frame: number, state: GameStateOutMsg['state']) {
-    this.send({ type: 'gameState', frame, state });
-  }
-
-  sendSuperActivate(playerIndex: number) {
-    this.send({ type: 'superActivate', playerIndex });
   }
 
   sendRoundResult(

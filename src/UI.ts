@@ -43,6 +43,7 @@ export class UI {
   p1HealthDamageTarget: number;
   p2HealthDamageTarget: number;
   announcementTimer: ReturnType<typeof setTimeout> | null;
+  private stallIndicator: HTMLElement | null = null;
 
   constructor() {
     this.loadingScreen = document.getElementById('loading-screen');
@@ -248,6 +249,24 @@ export class UI {
     }
     this.p1SuperWrapper?.classList.toggle('super-ready', p1Full);
     this.p2SuperWrapper?.classList.toggle('super-ready', p2Full);
+  }
+
+  showStallIndicator(show: boolean) {
+    if (show && !this.stallIndicator) {
+      const el = document.createElement('div');
+      el.textContent = 'SYNCING...';
+      el.style.cssText = `
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        color: #fff; font-size: 18px; font-weight: bold; z-index: 50;
+        text-shadow: 0 0 8px rgba(0,0,0,0.8); pointer-events: none;
+        opacity: 0.8; letter-spacing: 2px;
+      `;
+      document.body.appendChild(el);
+      this.stallIndicator = el;
+    } else if (!show && this.stallIndicator) {
+      this.stallIndicator.remove();
+      this.stallIndicator = null;
+    }
   }
 
   showBlockEffect() {

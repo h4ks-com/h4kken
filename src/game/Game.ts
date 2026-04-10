@@ -64,8 +64,7 @@ export class Game {
   frame: number;
   inputSyncBuffer: InputSyncBuffer | null;
   private captureFrame: number;
-  pendingOpponentInput: InputState | null;
-  lastOpponentInput: InputState;
+  private _stallShown = false;
   audio: AudioManager;
   bgm: BgmManager;
   onResize: () => void;
@@ -137,41 +136,13 @@ export class Game {
     this.inputSyncBuffer = null;
     this.captureFrame = 0;
 
-    this.pendingOpponentInput = null;
-    this.lastOpponentInput = this.emptyInput();
+    this._stallShown = false;
 
     this.onResize = this._onResize.bind(this);
     window.addEventListener('resize', this.onResize);
 
     this.setupUIEvents();
     setupNetworkEvents(this);
-  }
-
-  emptyInput(): InputState {
-    return {
-      up: false,
-      down: false,
-      left: false,
-      right: false,
-      block: false,
-      lp: false,
-      rp: false,
-      lk: false,
-      rk: false,
-      upJust: false,
-      downJust: false,
-      leftJust: false,
-      rightJust: false,
-      lpJust: false,
-      rpJust: false,
-      lkJust: false,
-      rkJust: false,
-      dashLeft: false,
-      dashRight: false,
-      sideStepUp: false,
-      sideStepDown: false,
-      superJust: false,
-    };
   }
 
   setupUIEvents() {
@@ -390,7 +361,7 @@ export class Game {
     if (this.state !== GAME_STATE.FIGHTING || !this.inputSyncBuffer) return;
 
     const targetFrame = this.inputSyncBuffer.addLocalInput(this.captureFrame, rawInput);
-    this.network.sendSyncInput(targetFrame, this.serializeInput(rawInput));
+    this.network.sendSyncInput(targetFrame, rawInput);
     this.captureFrame++;
   }
 
@@ -407,6 +378,13 @@ export class Game {
       this.frame++;
       steps++;
       if (this.frame % 60 === 0) this.inputSyncBuffer.prune(this.frame - 120);
+    }
+
+    // Show/hide connection stall indicator
+    const stalling = this.inputSyncBuffer.currentStall > 15;
+    if (stalling !== this._stallShown) {
+      this._stallShown = stalling;
+      this.ui.showStallIndicator(stalling);
     }
   }
 
@@ -526,33 +504,6 @@ export class Game {
       f2.position.x += nx * overlap;
       f2.position.z += nz * overlap;
     }
-  }
-
-  serializeInput(input: InputState): InputState {
-    return {
-      up: input.up,
-      down: input.down,
-      left: input.left,
-      right: input.right,
-      block: input.block,
-      lp: input.lp,
-      rp: input.rp,
-      lk: input.lk,
-      rk: input.rk,
-      upJust: input.upJust,
-      downJust: input.downJust,
-      leftJust: input.leftJust,
-      rightJust: input.rightJust,
-      lpJust: input.lpJust,
-      rpJust: input.rpJust,
-      lkJust: input.lkJust,
-      rkJust: input.rkJust,
-      dashLeft: input.dashLeft,
-      dashRight: input.dashRight,
-      sideStepUp: input.sideStepUp,
-      sideStepDown: input.sideStepDown,
-      superJust: input.superJust,
-    };
   }
 
   // ============================================================

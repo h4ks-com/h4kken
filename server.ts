@@ -52,11 +52,8 @@ interface ClientMessage {
 interface Room {
   id: string;
   players: [PlayerInfo, PlayerInfo];
-  frame: number;
-  inputs: [unknown, unknown];
   state: 'countdown' | 'fighting' | 'roundEnd' | 'matchEnd';
   countdownTimer: ReturnType<typeof setTimeout> | null;
-  superMeters: [number, number];
   pendingRoundResults: [ClientMessage | null, ClientMessage | null];
   roundResultTimeout: ReturnType<typeof setTimeout> | null;
 }
@@ -74,11 +71,8 @@ function createRoom(player1: PlayerInfo, player2: PlayerInfo): Room {
   const room: Room = {
     id: roomId,
     players: [player1, player2],
-    frame: 0,
-    inputs: [null, null],
     state: 'countdown',
     countdownTimer: null,
-    superMeters: [0, 0],
     pendingRoundResults: [null, null],
     roundResultTimeout: null,
   };
@@ -131,7 +125,6 @@ function startCountdown(room: Room) {
     broadcastToRoom(room, { type: 'countdown', count });
     if (count <= 0) {
       room.state = 'fighting';
-      room.frame = 0;
       broadcastToRoom(room, { type: 'fight' });
       return;
     }
@@ -175,21 +168,6 @@ function handleJoin(ws: import('ws').WebSocket, playerInfo: PlayerInfo, name: st
   }
 }
 
-function handleInput(playerInfo: PlayerInfo, msg: ClientMessage) {
-  if (!playerInfo.roomId) return;
-  const room = rooms.get(playerInfo.roomId);
-  if (!room || room.state !== 'fighting') return;
-
-  const opponentIdx = playerInfo.playerIndex === 0 ? 1 : 0;
-  const opponent = room.players[opponentIdx];
-
-  sendTo(opponent, {
-    type: 'opponentInput',
-    frame: msg.frame,
-    input: msg.input,
-  });
-}
-
 const OP_SYNC_INPUT = 0x01;
 const OP_OPPONENT_SYNC_INPUT = 0x02;
 
@@ -207,40 +185,6 @@ function handleBinarySyncInput(playerInfo: PlayerInfo, data: Buffer) {
   data.copy(relay);
   relay[0] = OP_OPPONENT_SYNC_INPUT;
   opponent.ws.send(relay);
-}
-
-function handleGameState(playerInfo: PlayerInfo, msg: ClientMessage) {
-  if (!playerInfo.roomId || playerInfo.playerIndex !== 0) return;
-  const room = rooms.get(playerInfo.roomId);
-  if (!room) return;
-
-  // Cache super meter values from P1's authoritative simulation
-  const state = msg.state as { p1?: { superMeter?: number }; p2?: { superMeter?: number } } | null;
-  if (state?.p1?.superMeter !== undefined) room.superMeters[0] = state.p1.superMeter;
-  if (state?.p2?.superMeter !== undefined) room.superMeters[1] = state.p2.superMeter;
-
-  const opponent = room.players[1];
-  sendTo(opponent, {
-    type: 'gameState',
-    state: msg.state,
-    frame: msg.frame,
-  });
-}
-
-const SUPER_MAX = 1200; // must match GAME_CONSTANTS.SUPER_MAX (600 * PACE_SCALE=2)
-
-function handleSuperActivate(playerInfo: PlayerInfo, msg: ClientMessage) {
-  if (!playerInfo.roomId) return;
-  const room = rooms.get(playerInfo.roomId);
-  if (!room || room.state !== 'fighting') return;
-
-  const idx = msg.playerIndex ?? playerInfo.playerIndex;
-  if (idx === null || idx === undefined) return;
-  const meter = room.superMeters[idx] ?? 0;
-  if (meter < SUPER_MAX) return;
-
-  room.superMeters[idx] = 0;
-  broadcastToRoom(room, { type: 'superActivated', playerIndex: idx });
 }
 
 function finishRound(room: Room, result: ClientMessage) {
@@ -350,17 +294,8 @@ wss.on('connection', (ws) => {
       case 'join':
         handleJoin(ws, playerInfo, msg.name);
         break;
-      case 'input':
-        handleInput(playerInfo, msg);
-        break;
-      case 'gameState':
-        handleGameState(playerInfo, msg);
-        break;
       case 'roundResult':
         handleSyncRoundResult(playerInfo, msg);
-        break;
-      case 'superActivate':
-        handleSuperActivate(playerInfo, msg);
         break;
       case 'leave':
         handleLeave(playerInfo);

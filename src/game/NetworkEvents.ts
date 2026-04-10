@@ -88,11 +88,6 @@ export function setupNetworkEvents(game: Game): void {
     game.inputSyncBuffer?.addRemoteInput(msg.targetFrame, msg.input);
   });
 
-  // Legacy handler kept for backward compat during migration
-  game.network.on('opponentInput', (msg) => {
-    game.pendingOpponentInput = msg.input;
-  });
-
   // With delay-based sync both clients detect KO/time-up locally at the same
   // frame, so by the time the server's confirmation arrives the state is already
   // ROUND_END. This handler is a defensive fallback — it only fires if the
