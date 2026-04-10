@@ -239,8 +239,15 @@ export class Game {
     this.fightCamera.reset();
     this.captureFrame = 0;
     if (!this.isPractice) {
-      this.inputSyncBuffer = new InputSyncBuffer(this.localPlayerIndex as 0 | 1, 3);
+      // Adaptive delay: need enough frames to cover one-way latency.
+      // delay = ceil(halfRTT / frameTime) + 1 safety margin, min 2, max 6
+      const halfRtt = this.network.rtt / 2;
+      const delay = Math.max(2, Math.min(6, Math.ceil(halfRtt / (this.tickDuration * 1000)) + 1));
+      this.inputSyncBuffer = new InputSyncBuffer(this.localPlayerIndex as 0 | 1, delay);
       this.frame = this.inputSyncBuffer.inputDelay;
+      console.log(
+        `[SYNC] RTT=${this.network.rtt}ms → input delay=${delay} frames (${Math.round(delay * this.tickDuration * 1000)}ms)`,
+      );
     } else {
       this.inputSyncBuffer = null;
       this.frame = 0;

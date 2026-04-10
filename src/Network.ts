@@ -62,12 +62,18 @@ interface OpponentSyncInputMsg {
   input: InputState;
 }
 
+interface PongMsg {
+  type: 'pong';
+  t: number;
+}
+
 interface SimpleMsg {
   type: 'waiting' | 'fight' | 'opponentLeft';
 }
 
 type ServerMessage =
   | SimpleMsg
+  | PongMsg
   | MatchedMsg
   | CountdownMsg
   | OpponentInputMsg
@@ -106,6 +112,7 @@ export interface FighterStateSync {
 // ── Outbound messages (client → server) ─────────────────────
 
 type JoinMsg = { type: 'join'; name: string };
+type PingMsg = { type: 'ping'; t: number };
 type RoundResultOutMsg = {
   type: 'roundResult';
   winner: number;
@@ -117,7 +124,7 @@ type RoundResultOutMsg = {
 };
 type LeaveMsg = { type: 'leave' };
 
-type ClientMessage = JoinMsg | RoundResultOutMsg | LeaveMsg;
+type ClientMessage = JoinMsg | PingMsg | RoundResultOutMsg | LeaveMsg;
 
 // ── Event handler map ────────────────────────────────────────
 
@@ -144,7 +151,9 @@ export class Network {
   playerIndex: number;
   opponentName: string;
   roomId: string | null;
+  rtt = 0;
   private handlers: { [K in EventName]?: Array<HandlerMap[K]> };
+  private pingInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.ws = null;
@@ -181,11 +190,14 @@ export class Network {
 
       this.ws.onopen = () => {
         this.connected = true;
+        this.startPing();
         resolve();
       };
 
       this.ws.onclose = () => {
         this.connected = false;
+        if (this.pingInterval) clearInterval(this.pingInterval);
+        this.pingInterval = null;
         this.emit('disconnected');
       };
 
@@ -213,8 +225,17 @@ export class Network {
     }
   }
 
+  private startPing() {
+    this.pingInterval = setInterval(() => {
+      this.send({ type: 'ping', t: Date.now() } as ClientMessage);
+    }, 2000);
+  }
+
   private handleMessage(msg: ServerMessage) {
     switch (msg.type) {
+      case 'pong':
+        this.rtt = Date.now() - msg.t;
+        break;
       case 'waiting':
         this.emit('waiting');
         break;

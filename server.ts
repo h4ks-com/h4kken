@@ -47,6 +47,7 @@ interface ClientMessage {
   victoryAnim?: string;
   defeatAnim?: string;
   playerIndex?: number;
+  t?: number;
 }
 
 interface Room {
@@ -268,7 +269,12 @@ function handleClose(playerInfo: PlayerInfo) {
   }
 }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  // Disable Nagle's algorithm — flush every message immediately.
+  // Without this, TCP batches small packets (our 8-byte inputs) for up to
+  // 40-200ms waiting for more data, which destroys input latency.
+  req.socket.setNoDelay(true);
+
   const playerInfo: PlayerInfo = {
     ws,
     name: 'Player',
@@ -296,6 +302,9 @@ wss.on('connection', (ws) => {
         break;
       case 'roundResult':
         handleSyncRoundResult(playerInfo, msg);
+        break;
+      case 'ping':
+        sendTo(playerInfo, { type: 'pong', t: msg.t });
         break;
       case 'leave':
         handleLeave(playerInfo);
