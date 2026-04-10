@@ -8,6 +8,7 @@ export interface InputState {
   down: boolean;
   left: boolean;
   right: boolean;
+  block: boolean;
   lp: boolean;
   rp: boolean;
   lk: boolean;
@@ -87,6 +88,7 @@ export class InputManager {
       down: this.isPressed('KeyS') || this.isPressed('ArrowDown'),
       left: this.isPressed('KeyA') || this.isPressed('ArrowLeft'),
       right: this.isPressed('KeyD') || this.isPressed('ArrowRight'),
+      block: this.isPressed('Space'),
       lp: this.isPressed('KeyU'),
       rp: this.isPressed('KeyI'),
       lk: this.isPressed('KeyJ'),

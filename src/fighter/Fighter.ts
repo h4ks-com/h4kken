@@ -422,7 +422,21 @@ export class Fighter {
 
   handleStandingState(input: InputState) {
     this.isCrouching = false;
-    this.isBlocking = input.back ?? false;
+    const wasBlocking = this.isBlocking;
+    this.isBlocking = input.block;
+
+    if (this.isBlocking) {
+      this.velocity.x = 0;
+      this.state = FIGHTER_STATE.IDLE;
+      if (!wasBlocking) {
+        this.playAnimation('block');
+      }
+      return;
+    }
+
+    if (wasBlocking) {
+      this.playAnimation('blockExit');
+    }
 
     const move = CombatSystem.resolveMove(input, this);
     if (move) {
@@ -511,7 +525,7 @@ export class Fighter {
 
   handleCrouchState(input: InputState) {
     this.isCrouching = true;
-    this.isBlocking = input.back ?? false;
+    this.isBlocking = input.block;
 
     if (!input.down) {
       this.isCrouching = false;

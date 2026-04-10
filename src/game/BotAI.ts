@@ -110,6 +110,7 @@ function emptyInput(): InputState {
     down: false,
     left: false,
     right: false,
+    block: false,
     lp: false,
     rp: false,
     lk: false,
