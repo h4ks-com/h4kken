@@ -61,8 +61,8 @@ export class Game {
   effects: EffectsManager;
   tickRate: number;
   tickDuration: number;
-  accumulator: number;
   frame: number;
+  private _simWorker: Worker | null = null;
   rollbackManager: RollbackManager | null;
   private _stallShown = false;
   _isReplaying = false;
@@ -137,7 +137,6 @@ export class Game {
 
     this.tickRate = 60;
     this.tickDuration = 1 / this.tickRate;
-    this.accumulator = 0;
     this.frame = 0;
     this.rollbackManager = null;
 
@@ -186,8 +185,13 @@ export class Game {
       this.ui.showScreen('menu-screen');
     }, 500);
 
-    // Babylon render loop — replaces requestAnimationFrame
+    // Render loop (rAF-based) — pauses when the tab is hidden, which is fine.
     this.engine.runRenderLoop(() => this._gameLoop());
+
+    // Simulation heartbeat — runs in a Web Worker so it keeps firing even when
+    // the tab is not focused. Each message = one fixed 60fps sim tick.
+    this._simWorker = new Worker(new URL('./SimWorker.ts', import.meta.url), { type: 'module' });
+    this._simWorker.onmessage = () => this._onSimTick();
   }
 
   createFighters() {
@@ -329,25 +333,26 @@ export class Game {
   // GAME LOOP
   // ============================================================
 
+  // Render-only loop (runs via requestAnimationFrame, pauses when tab is hidden).
+  // Simulation is driven separately by _onSimTick via the worker heartbeat.
   private _gameLoop() {
-    const deltaTime = Math.min(this.engine.getDeltaTime() / 1000, 0.05);
-    this.accumulator += deltaTime;
     if (this.rollbackManager && this.state === GAME_STATE.FIGHTING) {
       this._diagRenderFrames++;
     }
-
-    while (this.accumulator >= this.tickDuration) {
-      this.accumulator -= this.tickDuration;
-      if (this.isPractice || !this.rollbackManager) {
-        this._fixedUpdatePractice();
-        this.frame++;
-      } else {
-        this._advanceWithRollback();
-      }
-    }
-
+    const deltaTime = this.engine.getDeltaTime() / 1000;
     this.render(deltaTime);
     this.scene.render();
+  }
+
+  // One fixed sim tick, fired by the Web Worker heartbeat at 60fps.
+  // Continues running when the tab loses focus (unlike rAF).
+  private _onSimTick() {
+    if (this.isPractice || !this.rollbackManager) {
+      this._fixedUpdatePractice();
+      this.frame++;
+    } else {
+      this._advanceWithRollback();
+    }
   }
 
   // Practice / legacy path: immediate input, no network sync
