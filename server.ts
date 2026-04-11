@@ -274,7 +274,6 @@ wss.on('connection', (ws, req) => {
   // Without this, TCP batches small packets (our 8-byte inputs) for up to
   // 40-200ms waiting for more data, which destroys input latency.
   req.socket.setNoDelay(true);
-
   const playerInfo: PlayerInfo = {
     ws,
     name: 'Player',

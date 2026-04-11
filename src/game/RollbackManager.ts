@@ -18,8 +18,8 @@ export interface RollbackHost {
   setReplaying(v: boolean): void;
 }
 
-// 20 frames ≈ 333ms at 60fps — enough headroom for typical internet jitter
-const MAX_ROLLBACK = 20;
+// 30 frames ≈ 500ms at 60fps — handles VPN/high-latency play (avg lag ~17f) with ~12f headroom
+const MAX_ROLLBACK = 30;
 
 export interface RollbackDiag {
   // Filled by RollbackManager
@@ -132,6 +132,10 @@ export class RollbackManager {
   }
 
   shouldStall(currentFrame: number): boolean {
+    // Don't stall until we've heard from the remote at least once — avoids false
+    // stalls during the connection handshake / countdown phase when inputs haven't
+    // started flowing yet.
+    if (this.lastConfirmedRemoteFrame < 0) return false;
     const stalling = currentFrame - this.lastConfirmedRemoteFrame > MAX_ROLLBACK;
     this.stallFrameCount = stalling ? this.stallFrameCount + 1 : 0;
     return stalling;
