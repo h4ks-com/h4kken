@@ -21,11 +21,16 @@ export type { HitResult, MoveData } from './types';
 export namespace CombatSystem {
   function resolveRunningOrThrow(input: InputState, state: string): MoveData | null {
     if (input.lpJust && input.lkJust) return MOVES.throw_cmd ?? null;
-    if (
-      state === FIGHTER_STATE.RUN &&
-      (input.lpJust || input.rpJust || input.lkJust || input.rkJust)
-    ) {
-      return MOVES.running_attack ?? null;
+    if (state === FIGHTER_STATE.RUN) {
+      if (input.lkJust || input.rkJust) return MOVES.slide_attack ?? null;
+      if (input.lpJust || input.rpJust) return MOVES.running_attack ?? null;
+    }
+    return null;
+  }
+
+  function resolveAerialAttack(input: InputState): MoveData | null {
+    if (input.lkJust || input.rkJust || input.lpJust || input.rpJust) {
+      return MOVES.aerial_kick ?? null;
     }
     return null;
   }
@@ -66,6 +71,16 @@ export namespace CombatSystem {
 
     if (state === FIGHTER_STATE.ATTACKING && fighter.currentMove) {
       return resolveComboInput(input, fighter);
+    }
+
+    const airStates = [
+      FIGHTER_STATE.JUMP,
+      FIGHTER_STATE.JUMP_FORWARD,
+      FIGHTER_STATE.JUMP_BACKWARD,
+      FIGHTER_STATE.FALLING,
+    ];
+    if (airStates.includes(state)) {
+      return resolveAerialAttack(input);
     }
 
     const runOrThrow = resolveRunningOrThrow(input, state);

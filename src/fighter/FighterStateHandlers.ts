@@ -49,7 +49,14 @@ export function handleStandingState(fighter: Fighter, input: InputState): void {
     fighter.isGrounded = false;
     fighter.playAnimation('jumpSquat', 6.0, 0.05);
     fighter.animGroups.jumpSquat?.onAnimationGroupEndObservable.addOnce(() => {
-      if (!fighter.isGrounded) fighter.playAnimation('jump');
+      if (!fighter.isGrounded) {
+        fighter.playAnimation('jump');
+        fighter.animGroups.jump?.onAnimationGroupEndObservable.addOnce(() => {
+          if (!fighter.isGrounded && fighter.state !== FIGHTER_STATE.ATTACKING) {
+            fighter.playAnimation('falling');
+          }
+        });
+      }
     });
     return;
   }
@@ -165,7 +172,13 @@ export function handleCrouchState(fighter: Fighter, input: InputState): void {
   }
 }
 
-export function handleAirState(fighter: Fighter): void {
+export function handleAirState(fighter: Fighter, input: InputState): void {
+  const move = CombatSystem.resolveMove(input, fighter);
+  if (move) {
+    fighter.startAttack(move);
+    return;
+  }
+
   fighter.velocity.y += GC.GRAVITY;
 
   if (fighter.position.y <= GC.GROUND_Y && fighter.velocity.y <= 0) {
@@ -210,6 +223,17 @@ export function handleAttackState(fighter: Fighter, input: InputState): void {
     return;
   }
 
+  // Keep gravity running during aerial attacks; stick to ground but let the
+  // move finish so the full animation plays before transitioning to landing.
+  if (!fighter.isGrounded) {
+    fighter.velocity.y += GC.GRAVITY;
+    if (fighter.position.y <= GC.GROUND_Y && fighter.velocity.y <= 0) {
+      fighter.position.y = GC.GROUND_Y;
+      fighter.velocity.y = 0;
+      fighter.isGrounded = true;
+    }
+  }
+
   fighter.moveFrame++;
   const totalFrames =
     fighter.currentMove.startupFrames +
@@ -240,9 +264,14 @@ export function handleAttackState(fighter: Fighter, input: InputState): void {
     fighter.currentMove = null;
     fighter.moveFrame = 0;
     fighter.hasHitThisMove = false;
-    fighter.state = FIGHTER_STATE.IDLE;
     fighter.velocity.x = 0;
-    fighter.playAnimation('combatIdle');
+    if (!fighter.isGrounded) {
+      fighter.state = FIGHTER_STATE.FALLING;
+      fighter.playAnimation('falling');
+    } else {
+      fighter.state = FIGHTER_STATE.IDLE;
+      fighter.playAnimation('combatIdle');
+    }
   }
 }
 

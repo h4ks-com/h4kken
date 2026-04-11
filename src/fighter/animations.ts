@@ -184,6 +184,10 @@ export const ANIM_CONFIG = {
   introSpellIdle: { glb: 'Spell_Double_Idle_Loop', loop: true, blend: 0.1 },
   introSpellExit: { glb: 'Spell_Double_Exit', blend: 0.1 },
   introFixing: { glb: 'Fixing_Kneeling', blend: 0.2 },
+  // ── Aerial ──────────────────────────────────────────────────────────────────
+  aerialKick: { glb: 'BackFlip', blend: 0.2 },
+  // ── Slide ───────────────────────────────────────────────────────────────────
+  slideAttack: { glb: 'Slide_Start', src: 'ual2', blend: 0.08 },
   // ── Super Power ─────────────────────────────────────────────────────────────
   superActivate: { glb: 'MonsterTransformation', src: 'ual2', blend: 0.1 },
 } satisfies Record<string, AnimConfig>;

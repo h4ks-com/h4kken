@@ -704,7 +704,7 @@ export class Fighter {
       case FIGHTER_STATE.JUMP_FORWARD:
       case FIGHTER_STATE.JUMP_BACKWARD:
       case FIGHTER_STATE.FALLING:
-        handleAirState(this);
+        handleAirState(this, relInput);
         break;
       case FIGHTER_STATE.RUN:
         handleRunState(this, relInput);
@@ -779,11 +779,10 @@ export class Fighter {
       // Math.abs handles GLBs where from > to (would otherwise produce negative speed)
       const groupDuration = Math.abs(group.to - group.from);
       if (groupDuration > 0 && moveDuration > 0) {
-        speed = groupDuration / 60 / moveDuration;
+        speed = (groupDuration / 60 / moveDuration) * (move.animSpeed || 1.0);
         speed = Math.max(0.3, Math.min(speed, 4.0));
       }
     }
-
     // combo blend overrides the per-animation default for a tighter chain feel
     this.playAnimation(animName as AnimKey, speed, isCombo ? 0.08 : undefined);
   }
@@ -1107,7 +1106,7 @@ export class Fighter {
           if (group) {
             const groupDuration = Math.abs(group.to - group.from);
             if (groupDuration > 0 && moveDuration > 0) {
-              speed = groupDuration / 60 / moveDuration;
+              speed = (groupDuration / 60 / moveDuration) * (this.currentMove.animSpeed || 1.0);
               speed = Math.max(0.3, Math.min(speed, 4.0));
             }
           }

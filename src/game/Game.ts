@@ -4,6 +4,7 @@
 // ============================================================
 
 import {
+  type AbstractEngine,
   Color3,
   DefaultRenderingPipeline,
   Engine,
@@ -11,6 +12,7 @@ import {
   ImageProcessingConfiguration,
   Scene,
   Vector3,
+  WebGPUEngine,
 } from '@babylonjs/core';
 import { AudioManager, BgmManager } from '../Audio';
 import { FightCamera } from '../Camera';
@@ -43,7 +45,7 @@ const GAME_STATE = {
 export class Game {
   state: string;
   canvas: HTMLCanvasElement;
-  engine: Engine;
+  engine: AbstractEngine;
   scene: Scene;
   camera: FreeCamera;
   input: InputManager;
@@ -79,14 +81,26 @@ export class Game {
   _lastAnnouncedRound: number;
   private botAI = new BotAI();
 
-  constructor() {
-    this.state = GAME_STATE.LOADING;
-
+  static async create(): Promise<Game> {
     const canvasEl = document.getElementById('game-canvas');
     if (!(canvasEl instanceof HTMLCanvasElement)) throw new Error('No canvas element found');
-    this.canvas = canvasEl;
+    const engine = await Game._makeEngine(canvasEl);
+    return new Game(canvasEl, engine);
+  }
 
-    this.engine = new Engine(this.canvas, true, { antialias: true, audioEngine: true });
+  private static async _makeEngine(canvas: HTMLCanvasElement): Promise<AbstractEngine> {
+    if (await WebGPUEngine.IsSupportedAsync) {
+      const gpu = new WebGPUEngine(canvas, { antialias: true, audioEngine: true });
+      await gpu.initAsync();
+      return gpu;
+    }
+    return new Engine(canvas, true, { antialias: true, audioEngine: true });
+  }
+
+  private constructor(canvasEl: HTMLCanvasElement, engine: AbstractEngine) {
+    this.state = GAME_STATE.LOADING;
+    this.canvas = canvasEl;
+    this.engine = engine;
     this.engine.setSize(window.innerWidth, window.innerHeight);
 
     this.scene = new Scene(this.engine);
@@ -648,8 +662,10 @@ export class Game {
 
     if (matchOver) {
       setTimeout(() => this.onMatchEnd(winnerIdx), 2500);
+    } else if (this.isPractice) {
+      this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
     }
-    // No _nextRoundTimeout — server drives the next countdown
+    // In multiplayer the server drives the next countdown via 'countdown' events
   }
 
   onTimeUp() {
@@ -669,6 +685,9 @@ export class Game {
         this.network.sendRoundResult(-1, f1.wins, f2.wins, false, '', '');
       }
       this.ui.showAnnouncement('DRAW', 'TIME UP', 2000);
+      if (this.isPractice) {
+        this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
+      }
       return;
     }
 
@@ -700,7 +719,10 @@ export class Game {
 
     if (matchOver) {
       setTimeout(() => this.onMatchEnd(winnerIdx), 2500);
+    } else if (this.isPractice) {
+      this._nextRoundTimeout = setTimeout(() => this.startNextRound(), 3000);
     }
+    // In multiplayer the server drives the next countdown via 'countdown' events
   }
 
   onMatchEnd(winnerIdx: number) {
