@@ -18,7 +18,8 @@ export interface RollbackHost {
   setReplaying(v: boolean): void;
 }
 
-const MAX_ROLLBACK = 8;
+// 20 frames ≈ 333ms at 60fps — enough headroom for typical internet jitter
+const MAX_ROLLBACK = 20;
 
 export class RollbackManager {
   private localIndex: 0 | 1;
@@ -35,12 +36,20 @@ export class RollbackManager {
 
   private lastConfirmedRemote: InputState | null = null;
   lastConfirmedRemoteFrame = -1;
+  // Track how many consecutive frames we've been stalling (for UI hysteresis)
+  stallFrameCount = 0;
 
   constructor(localPlayerIndex: 0 | 1) {
     this.localIndex = localPlayerIndex;
   }
 
+  hasLocalInput(frame: number): boolean {
+    return this.localInputs.has(frame);
+  }
+
   addLocalInput(frame: number, input: InputState) {
+    // Don't overwrite if already stored — avoids sending duplicates during a stall
+    if (this.localInputs.has(frame)) return;
     this.localInputs.set(frame, input);
   }
 
@@ -82,8 +91,9 @@ export class RollbackManager {
   }
 
   shouldStall(currentFrame: number): boolean {
-    // Only stall if we've exhausted the rollback window
-    return currentFrame - this.lastConfirmedRemoteFrame > MAX_ROLLBACK;
+    const stalling = currentFrame - this.lastConfirmedRemoteFrame > MAX_ROLLBACK;
+    this.stallFrameCount = stalling ? this.stallFrameCount + 1 : 0;
+    return stalling;
   }
 
   private performRollback(toFrame: number, host: RollbackHost) {
@@ -123,6 +133,7 @@ export class RollbackManager {
     this.predictedInputs.clear();
     this.lastConfirmedRemote = null;
     this.lastConfirmedRemoteFrame = -1;
+    this.stallFrameCount = 0;
   }
 }
 

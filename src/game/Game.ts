@@ -358,15 +358,20 @@ export class Game {
     const rm = this.rollbackManager;
     if (this.state !== GAME_STATE.FIGHTING || !rm) return;
 
-    // Store local input and send to opponent immediately (no delay)
+    // addLocalInput is idempotent (no-op if already stored), so safe to call every tick.
+    // sendSyncInput only fires on the first write for this frame number.
+    const isNewFrame = !rm.hasLocalInput(this.frame);
     rm.addLocalInput(this.frame, rawInput);
-    this.network.sendSyncInput(this.frame, rawInput);
+    if (isNewFrame) this.network.sendSyncInput(this.frame, rawInput);
 
-    // Check if we've exhausted the rollback window (opponent too far behind)
+    // Check if we've exhausted the rollback window (opponent too far behind).
+    // Show SYNCING only after stalling for >12 consecutive frames (~200ms) to
+    // avoid visual flicker from brief network jitter.
     const stalling = rm.shouldStall(this.frame);
-    if (stalling !== this._stallShown) {
-      this._stallShown = stalling;
-      this.ui.showStallIndicator(stalling);
+    const showStall = rm.stallFrameCount > 12;
+    if (showStall !== this._stallShown) {
+      this._stallShown = showStall;
+      this.ui.showStallIndicator(showStall);
     }
     if (stalling) return;
 
