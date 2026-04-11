@@ -484,6 +484,10 @@ export class Fighter {
     this._superCoreParticles?.stop();
   }
 
+  get speedMult(): number {
+    return this.superPowerActive ? GC.SUPER_SPEED_MULT : 1;
+  }
+
   activateSuperPower() {
     if (this.superPowerActive || this._pendingSuperActivation || this.superMeter < GC.SUPER_MAX)
       return;
@@ -525,7 +529,9 @@ export class Fighter {
       this.currentAnimGroup.stop();
     }
 
-    const speed = speedOverride ?? cfg?.speed ?? 1.0;
+    const baseSpeed = speedOverride ?? cfg?.speed ?? 1.0;
+    // Boost all animation playback during super — except the activation animation itself
+    const speed = name === 'superActivate' ? baseSpeed : baseSpeed * this.speedMult;
     const blend = blendOverride ?? cfg?.blend ?? 0.15;
 
     const from = Math.min(newGroup.from, newGroup.to);

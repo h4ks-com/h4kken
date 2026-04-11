@@ -36,12 +36,12 @@ export function handleStandingState(fighter: Fighter, input: InputState): void {
   }
 
   if (input.upJust) {
-    fighter.velocity.y = GC.JUMP_VELOCITY;
+    fighter.velocity.y = GC.JUMP_VELOCITY * fighter.speedMult;
     if (input.forward) {
-      fighter.velocity.x = GC.JUMP_FORWARD_X;
+      fighter.velocity.x = GC.JUMP_FORWARD_X * fighter.speedMult;
       fighter.state = FIGHTER_STATE.JUMP_FORWARD;
     } else if (input.back) {
-      fighter.velocity.x = -GC.JUMP_FORWARD_X;
+      fighter.velocity.x = -GC.JUMP_FORWARD_X * fighter.speedMult;
       fighter.state = FIGHTER_STATE.JUMP_BACKWARD;
     } else {
       fighter.state = FIGHTER_STATE.JUMP;
@@ -82,7 +82,7 @@ export function handleStandingState(fighter: Fighter, input: InputState): void {
   if (input.dashBack) {
     fighter.state = FIGHTER_STATE.DASH_BACK;
     fighter.dashTimer = GC.DASH_BACK_FRAMES;
-    fighter.velocity.x = -GC.DASH_BACK_SPEED;
+    fighter.velocity.x = -GC.DASH_BACK_SPEED * fighter.speedMult;
     fighter.playAnimation('runBack');
     return;
   }
@@ -96,11 +96,11 @@ export function handleStandingState(fighter: Fighter, input: InputState): void {
   }
 
   if (input.forward) {
-    fighter.velocity.x = GC.WALK_SPEED;
+    fighter.velocity.x = GC.WALK_SPEED * fighter.speedMult;
     fighter.state = FIGHTER_STATE.WALK_FORWARD;
     fighter.playAnimation('walk');
   } else if (input.back) {
-    fighter.velocity.x = -GC.BACK_WALK_SPEED;
+    fighter.velocity.x = -GC.BACK_WALK_SPEED * fighter.speedMult;
     fighter.state = FIGHTER_STATE.WALK_BACKWARD;
     fighter.playAnimation('walkBack');
   } else {
@@ -139,7 +139,7 @@ export function handleCrouchState(fighter: Fighter, input: InputState): void {
   }
 
   if (input.forward) {
-    fighter.velocity.x = GC.CROUCH_WALK_SPEED;
+    fighter.velocity.x = GC.CROUCH_WALK_SPEED * fighter.speedMult;
     if (
       fighter.state !== FIGHTER_STATE.CROUCH_WALK ||
       fighter.currentAnimGroup !== fighter.animGroups.crouchWalk
@@ -148,7 +148,7 @@ export function handleCrouchState(fighter: Fighter, input: InputState): void {
       fighter.playAnimation('crouchWalk');
     }
   } else if (input.back) {
-    fighter.velocity.x = -GC.CROUCH_WALK_SPEED;
+    fighter.velocity.x = -GC.CROUCH_WALK_SPEED * fighter.speedMult;
     if (
       fighter.state !== FIGHTER_STATE.CROUCH_WALK ||
       fighter.currentAnimGroup !== fighter.animGroups.crouchWalkBack
@@ -200,7 +200,7 @@ export function handleRunState(fighter: Fighter, input: InputState): void {
     return;
   }
 
-  fighter.velocity.x = GC.RUN_SPEED;
+  fighter.velocity.x = GC.RUN_SPEED * fighter.speedMult;
 }
 
 export function handleAttackState(fighter: Fighter, input: InputState): void {
@@ -309,7 +309,7 @@ export function handleGetupState(fighter: Fighter): void {
 
 export function handleSidestepState(fighter: Fighter): void {
   fighter.sideStepTimer--;
-  fighter.velocity.z = fighter.sideStepDir * GC.SIDESTEP_SPEED;
+  fighter.velocity.z = fighter.sideStepDir * GC.SIDESTEP_SPEED * fighter.speedMult;
 
   if (fighter.sideStepTimer <= 0) {
     fighter.velocity.z = 0;
