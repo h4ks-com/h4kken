@@ -329,11 +329,6 @@ export class Fighter {
       for (const bone of clonedSkeleton.bones) {
         boneByName.set(Fighter._boneSuffix(bone.name), bone);
       }
-      console.log(
-        `[H4KKEN] F${this.playerIndex} skeleton "${clonedSkeleton.name}":`,
-        `${clonedSkeleton.bones.length} bones`,
-        `meshes=${this.meshes.length}`,
-      );
     }
 
     this._cloneAnimGroups(animGroups, boneByName);

@@ -427,14 +427,17 @@ export class Game {
       rd.predictionsTotal > 0 ? Math.round((rd.mispredictions / rd.predictionsTotal) * 100) : 0;
     const avgSim = d.simStepCount > 0 ? (d.simStepMs / d.simStepCount).toFixed(2) : '–';
 
-    console.log(
-      `[NET] fps=${fps.toFixed(0)} rtt=${this.network.rtt}ms` +
-        ` | remoteLag=${avgLag}f avg` +
-        ` | stalls=${d.stallFrames}f` +
-        ` | rollbacks=${rd.rollbacks} depth=${avgDepth}f` +
-        ` | mispred=${mispredPct}%/${rd.predictionsTotal}` +
-        ` | simStep=${avgSim}ms`,
-    );
+    // Only log when something is actually wrong — silent on a clean connection
+    if (d.stallFrames > 0 || rd.mispredictions > 0) {
+      console.warn(
+        `[NET] fps=${fps.toFixed(0)} rtt=${this.network.rtt}ms` +
+          ` | remoteLag=${avgLag}f avg` +
+          ` | stalls=${d.stallFrames}f` +
+          ` | rollbacks=${rd.rollbacks} depth=${avgDepth}f` +
+          ` | mispred=${mispredPct}%/${rd.predictionsTotal}` +
+          ` | simStep=${avgSim}ms`,
+      );
+    }
 
     // Reset window
     this._diag = makeDiag();
