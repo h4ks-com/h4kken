@@ -167,6 +167,10 @@ export function handleCrouchState(fighter: Fighter, input: InputState): void {
     fighter.velocity.x = 0;
     if (fighter.state !== FIGHTER_STATE.CROUCH) {
       fighter.state = FIGHTER_STATE.CROUCH;
+      fighter.playAnimation(input.block ? 'crouchBlock' : 'crouchIdle');
+    } else if (input.block && fighter.currentAnimKey !== 'crouchBlock') {
+      fighter.playAnimation('crouchBlock');
+    } else if (!input.block && fighter.currentAnimKey === 'crouchBlock') {
       fighter.playAnimation('crouchIdle');
     }
   }

@@ -30,6 +30,7 @@ import { FIGHTER_STATE, GAME_CONSTANTS, HIT_RESULT } from '../constants';
 import type { InputState } from '../Input';
 import type { FighterStateSync } from '../Network';
 import { ANIM_CONFIG, ANIM_POOLS, type AnimConfig, type AnimKey, pickRandom } from './animations';
+import { CompositeAnimController, isCompositeAnim } from './CompositeAnimations';
 import {
   cancelIntro,
   playIntroAnimation,
@@ -153,6 +154,7 @@ export class Fighter {
   private _rootRotY = 0;
   _introActive = false;
   _introTimeout: ReturnType<typeof setTimeout> | null = null;
+  private _composite!: CompositeAnimController;
 
   constructor(playerIndex: number, scene: Scene) {
     this.playerIndex = playerIndex;
@@ -332,6 +334,8 @@ export class Fighter {
     }
 
     this._cloneAnimGroups(animGroups, boneByName);
+    this._composite = new CompositeAnimController(this.scene, this.playerIndex);
+    this._composite.build(this.animGroups);
 
     this.rootNode.position.copyFrom(this.position);
     // initRotY must match PI/2 - facingAngle used in updateVisuals().
@@ -519,6 +523,20 @@ export class Fighter {
   }
 
   playAnimation(name: string, speedOverride?: number, blendOverride?: number) {
+    if (isCompositeAnim(name)) {
+      const speed = (speedOverride ?? 1.0) * this.speedMult;
+      if (this._composite.play(name, speed, blendOverride)) {
+        if (this.currentAnimGroup) {
+          this.currentAnimGroup.stop();
+          this.currentAnimGroup = null;
+        }
+        this.currentAnimKey = name;
+      }
+      return;
+    }
+
+    this._composite.stop();
+
     const cfg = (ANIM_CONFIG as Record<string, AnimConfig>)[name];
     const newGroup = this.animGroups[name];
     if (!newGroup) return;
