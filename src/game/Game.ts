@@ -438,10 +438,12 @@ export class Game {
     if (isNewFrame) this.network.sendSyncInput(this.frame, rawInput);
 
     // ── Soft frame advantage (GGPO-style) ──
-    // Skip one tick when local is >9f ahead of last confirmed remote input.
-    // Caps remoteLag at 9f (150ms) so the 30f hard stall almost never fires.
-    // Guard: skip if no remote input received yet (lastConfirmedRemoteFrame = -1).
-    if (rm.lastConfirmedRemoteFrame >= 0 && this.frame - rm.lastConfirmedRemoteFrame > 9) {
+    // Run at most softAdv frames ahead of the last confirmed remote input.
+    // Derive from current RTT so low-latency sessions get shallow rollback depth.
+    // Min 3 (jitter buffer), max 8 (won't approach MAX_ROLLBACK=30 on normal links).
+    const rttFrames = this.network.rtt / 16.67;
+    const softAdv = Math.max(3, Math.min(8, Math.ceil(rttFrames) + 2));
+    if (rm.lastConfirmedRemoteFrame >= 0 && this.frame - rm.lastConfirmedRemoteFrame > softAdv) {
       return;
     }
 
@@ -526,7 +528,7 @@ export class Game {
   // that point is CPU/JS, not GPU fillrate, so bigger scaling doesn't help.
   private _startQualityMonitor(): void {
     const mobile = isTouchDevice();
-    const options = new SceneOptimizerOptions(45, 1500); // target 45fps, check every 1.5s
+    const options = new SceneOptimizerOptions(40, 1000); // target 40fps, check every 1s
     if (!mobile) {
       // Desktop: bloom is on, kill it first. On mobile it's already off.
       options.optimizations.push(new PostProcessesOptimization(0));
