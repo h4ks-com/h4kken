@@ -4,6 +4,10 @@
 
 import { Game } from './game/Game';
 
+// Right-click / long-press menu (desktop + mobile) and iOS pinch-zoom gesture bypass.
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+
 Game.create()
   .then((game) => {
     console.log('[H4KKEN] Renderer:', game.engine.description);

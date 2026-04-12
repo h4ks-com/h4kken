@@ -103,9 +103,10 @@
   <div id="fight-hud" class="hud hidden">
     <!-- Health Bars -->
     <div class="health-bar-section">
-      <div class="player-info p1-info">
+      <!-- Player names: local left, opponent right -->
+      <div class="player-names-row">
         <span class="player-name" id="p1-name">PLAYER 1</span>
-        <div class="win-indicators" id="p1-wins"></div>
+        <span class="player-name p2-name-right" id="p2-name">PLAYER 2</span>
       </div>
       <div class="health-bars">
         <div class="health-bar-wrapper p1-bar">
@@ -140,8 +141,9 @@
           <span class="super-key-hint">Q</span>
         </div>
       </div>
-      <div class="player-info p2-info">
-        <span class="player-name" id="p2-name">PLAYER 2</span>
+      <!-- Win dots: local player left, opponent right — aligned under their own health bar -->
+      <div class="win-dots-row">
+        <div class="win-indicators" id="p1-wins"></div>
         <div class="win-indicators" id="p2-wins"></div>
       </div>
     </div>

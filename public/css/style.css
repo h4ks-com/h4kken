@@ -6,6 +6,7 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  -webkit-touch-callout: none;
 }
 
 :root {
@@ -378,6 +379,7 @@ html, body {
   width: 100%;
   z-index: 50;
   pointer-events: none;
+  touch-action: none;
 }
 
 .hud.hidden {
@@ -388,15 +390,11 @@ html, body {
   padding: 15px 30px 10px;
 }
 
-.player-info {
+.player-names-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.player-info.p2-info {
-  flex-direction: row-reverse;
+  margin-bottom: 3px;
 }
 
 .player-name {
@@ -404,10 +402,18 @@ html, body {
   font-size: 0.85rem;
   font-weight: 700;
   letter-spacing: 0.08em;
+  text-shadow: 0 1px 5px rgba(0,0,0,1), 0 0 10px rgba(0,0,0,0.8);
 }
 
-.p1-info .player-name { color: var(--p1-color); }
-.p2-info .player-name { color: var(--p2-color); }
+#p1-name { color: var(--p1-color); }
+#p2-name { color: var(--p2-color); }
+
+.win-dots-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 3px;
+}
 
 .win-indicators {
   display: flex;
@@ -418,14 +424,15 @@ html, body {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 2px solid rgba(255,255,255,0.3);
+  border: 2px solid rgba(255,255,255,0.4);
   background: transparent;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.9));
 }
 
 .win-dot.won {
   background: var(--warning);
   border-color: var(--warning);
-  box-shadow: 0 0 8px rgba(255,170,0,0.5);
+  filter: drop-shadow(0 0 5px rgba(255,170,0,0.7)) drop-shadow(0 1px 3px rgba(0,0,0,0.9));
 }
 
 .health-bars {
@@ -964,15 +971,16 @@ html, body {
 
 /* Portrait mobile — compact HUD, compact controls */
 @media screen and (max-width: 768px) {
-  .health-bar-section { padding: 5px 10px 3px; }
+  .health-bar-section { padding: 4px 8px 2px; }
   .health-bar-wrapper { height: 18px; }
-  .player-info { margin-bottom: 2px; }
-  .player-name { font-size: 0.68rem; }
+  .player-names-row { margin-bottom: 2px; }
+  .player-name { font-size: 0.65rem; }
   .super-bars { margin-top: 2px; }
-  .win-dot { width: 9px; height: 9px; }
+  .win-dots-row { margin-top: 2px; }
+  .win-dot { width: 8px; height: 8px; }
   .super-key-hint { display: none; }
-  .timer-box { width: 46px; height: 36px; }
-  .timer-box span { font-size: 1.2rem; }
+  .timer-box { width: 40px; height: 34px; }
+  .timer-box span { font-size: 1.1rem; }
 
   /* Controls sit closer to the edge */
   #mobile-controls { padding: 0 12px max(16px, env(safe-area-inset-bottom, 0px)); }
@@ -1003,9 +1011,9 @@ html, body {
   .super-bar-bg  { height: 6px; }
   .timer-box { width: 40px; height: 30px; }
   .timer-box span { font-size: 1rem; }
-  .player-name   { font-size: 0.58rem; }
+  .player-name   { font-size: 0.55rem; }
   .super-key-hint { display: none; }
-  .win-dot { width: 8px; height: 8px; }
+  .win-dot { width: 7px; height: 7px; }
 
   /* Controls */
   #mobile-controls { padding: 0 10px max(10px, env(safe-area-inset-bottom, 0px)); }
