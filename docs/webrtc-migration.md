@@ -70,16 +70,45 @@ dataChannel.binaryType = 'arraybuffer';
 
 ## ICE Server Configuration
 
+### Multi-Provider STUN Pool
+
+Instead of relying on a single provider (Google), h4kken uses a diversified STUN server pool with latency-based selection (`IceServerPool.ts`). This improves resilience against regional outages and picks the fastest server for each user:
+
+| Provider   | URL                                   | Notes                                    |
+|------------|---------------------------------------|------------------------------------------|
+| Google     | `stun:stun.l.google.com:19302`        | Most well-known, high availability       |
+| Google     | `stun:stun1.l.google.com:19302`       | Secondary Google endpoint                |
+| Cloudflare | `stun:stun.cloudflare.com:3478`       | Global anycast, low latency              |
+| Mozilla    | `stun:stun.services.mozilla.com:3478` | Operated by Mozilla Foundation           |
+| Twilio     | `stun:global.stun.twilio.com:3478`    | Enterprise-grade, global PoPs            |
+
+**Probe algorithm** (runs once per session, cached):
+
+1. Create one ephemeral `RTCPeerConnection` per STUN server
+2. Create a dummy DataChannel to trigger ICE gathering
+3. Measure time-to-first `icecandidate` event (~= STUN round-trip)
+4. Sort by response time, return top 3
+5. Merge with TURN credentials from server (if configured)
+
+If probing fails (e.g. `RTCPeerConnection` unavailable), the full unprobed list is used as fallback. The probe is triggered on WebSocket connect (before any match) so results are cached by match time.
+
+### TURN + STUN Combined
+
 ```typescript
 const iceServers = [
-  // Free STUN (NAT traversal for most connections)
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
+  // Probed STUN (top 3 by latency from IceServerPool)
+  { urls: 'stun:stun.cloudflare.com:3478' },     // fastest
+  { urls: 'stun:stun.l.google.com:19302' },       // 2nd
+  { urls: 'stun:global.stun.twilio.com:3478' },   // 3rd
   // Self-hosted TURN (relay for symmetric NAT / corporate firewalls)
   {
-    urls: 'turn:turn.yourdomain.com:443?transport=tcp',
-    username: 'h4kken',
-    credential: '<from-env>',
+    urls: [
+      'turn:realm:3478?transport=udp',
+      'turn:realm:3478?transport=tcp',
+      'turns:realm:5349?transport=tcp',
+    ],
+    username: '1713225600:h4kken',   // ephemeral, 24h TTL
+    credential: '<HMAC-SHA1>',        // from /api/turn-credentials
   },
 ];
 ```
@@ -135,15 +164,63 @@ classDiagram
 flowchart TD
     A[Match found] --> B[Start game on WS immediately]
     B --> C[Initiate WebRTC handshake in background]
-    C --> D{DataChannel opens<br/>within 5 seconds?}
+    C --> D{DataChannel opens<br/>within 8 seconds?}
     D -->|Yes| E[Switch binary input path to WebRTC]
-    D -->|No| F[Continue on WS — no player impact]
-    E --> G{DataChannel closes<br/>during gameplay?}
-    G -->|Yes| H[Fall back to WS immediately]
-    G -->|No| I[Continue on WebRTC]
+    D -->|No| F{Failed within 3s?}
+    F -->|Yes| G[Wait 2s, retry once]
+    F -->|No| H[Store failReason, stay on WS]
+    G --> I{Retry succeeds?}
+    I -->|Yes| E
+    I -->|No| H
+    E --> J{DataChannel closes<br/>during gameplay?}
+    J -->|Yes| K[Fall back to WS immediately]
+    J -->|No| L[Continue on WebRTC]
 ```
 
-**Key principle**: The game **never waits** for WebRTC. WS works from frame 1. WebRTC is an upgrade that happens transparently.
+**Key principles**:
+- The game **never waits** for WebRTC. WS works from frame 1.
+- WebRTC is a background upgrade that happens transparently.
+- One automatic retry on fast failure (< 3s) with 2s cooldown.
+- `failReason` is stored and displayed in the F3 debug overlay.
+
+## Connection Diagnostics (F3 Overlay)
+
+Press **F3** during an online match to see live diagnostics:
+
+| Line | Example | Description |
+|------|---------|-------------|
+| Transport | `Transport: WEBRTC` | Active binary transport |
+| WebRTC status | `WebRTC: ✓ CONNECTED (direct)` | Connection state + relay indicator |
+| ICE state | `ICE: connected  Gathering: complete` | ICE connection & gathering states |
+| Candidate types | `Candidate: srflx → srflx` | Local → remote candidate types |
+| P2P RTT | `P2P RTT: 42ms` | Actual WebRTC round-trip (from `getStats()`) |
+| DC buffer | `DC Buffer: 0B  Lost: 3` | DataChannel backpressure + packet loss |
+
+**WebRTC status values**:
+- `✓ CONNECTED (direct)` — P2P connection via STUN (best case)
+- `✓ CONNECTED (relay/TURN)` — Relayed through TURN server
+- `⟳ CONNECTING (checking)` — ICE negotiation in progress
+- `✗ FAILED (reason)` — Shows specific failure reason:
+  - "Browser does not support WebRTC"
+  - "Handshake timeout (8s)"
+  - "ICE connection failed (no route to peer)"
+  - "DataChannel error: ..."
+
+**Candidate types** (RFC 8445 §4.1.1.1):
+- `host` — Direct connection on a local interface
+- `srflx` — Server-reflexive (NAT traversed via STUN)
+- `prflx` — Peer-reflexive (discovered during connectivity checks)
+- `relay` — Traffic relayed through TURN server
+
+### getStats() Polling
+
+The F3 overlay polls `RTCPeerConnection.getStats()` every ~1 second to extract:
+- `currentRoundTripTime` from the nominated `candidate-pair` stat
+- `packetsLost` and `packetsSent`
+- `availableOutgoingBitrate`
+- Local and remote `candidateType`
+
+Polling only happens when F3 is visible — zero performance cost in normal gameplay.
 
 ## What Stays on WebSocket
 

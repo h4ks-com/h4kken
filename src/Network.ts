@@ -14,9 +14,10 @@
 import type { AnimKey } from './fighter/animations';
 import { decodeSyncInput, encodeSyncInput, OP } from './game/InputCodec';
 import type { InputState } from './Input';
+import { getBestStunServers, warmup as warmupIcePool } from './transport/IceServerPool';
 import type { IGameTransport } from './transport/Transport';
 import { WebSocketTransport } from './transport/Transport';
-import type { IceServerConfig } from './transport/WebRTCTransport';
+import type { IceServerConfig, WebRTCStats } from './transport/WebRTCTransport';
 import { WebRTCTransport } from './transport/WebRTCTransport';
 
 // ── Inbound messages (server → client) ──────────────────────
@@ -187,25 +188,24 @@ type HandlerMap = {
 
 type EventName = keyof HandlerMap;
 
-// Default STUN servers — always available for basic NAT traversal.
-const DEFAULT_STUN: IceServerConfig[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-];
-
-/** Fetch ephemeral TURN credentials from the game server (if configured). */
+/**
+ * Fetch ephemeral TURN credentials from the game server and merge
+ * with the best probed STUN servers from the IceServerPool.
+ * Always returns a non-empty list (probed STUN as fallback).
+ */
 async function fetchIceServers(): Promise<IceServerConfig[]> {
+  const stunServers = await getBestStunServers();
   try {
     const res = await fetch('/api/turn-credentials');
     const data = (await res.json()) as { iceServers: IceServerConfig[] };
     if (data.iceServers.length > 0) {
-      console.log('[ICE] Using self-hosted TURN relay');
-      return [...DEFAULT_STUN, ...data.iceServers];
+      console.log('[ICE] Using self-hosted TURN relay + probed STUN');
+      return [...stunServers, ...data.iceServers];
     }
   } catch {
     console.warn('[ICE] Failed to fetch TURN credentials — STUN only');
   }
-  return DEFAULT_STUN;
+  return stunServers;
 }
 
 export class Network {
@@ -225,10 +225,57 @@ export class Network {
   private _wsTransport: WebSocketTransport | null = null;
   private _rtcTransport: WebRTCTransport | null = null;
   private _activeTransport: IGameTransport | null = null;
+  private _webrtcFailReason: string | null = null;
+  private _webrtcRetried = false;
+  private _cachedStats: WebRTCStats | null = null;
+  private _lastStatsPoll = 0;
 
   /** Current transport type for diagnostics display. */
   get transportType(): 'websocket' | 'webrtc' {
     return this._activeTransport?.type ?? 'websocket';
+  }
+
+  // ── WebRTC diagnostics (consumed by F3 overlay) ───────────
+
+  /** ICE/connection/gathering state snapshot. */
+  get webrtcState(): {
+    ice: string;
+    gathering: string;
+    connection: string;
+    localCandidate: string | null;
+    remoteCandidate: string | null;
+  } {
+    const t = this._rtcTransport;
+    return {
+      ice: t?.iceConnectionState ?? 'n/a',
+      gathering: t?.iceGatheringState ?? 'n/a',
+      connection: t?.connectionState ?? 'n/a',
+      localCandidate: t?.localCandidateType ?? null,
+      remoteCandidate: t?.remoteCandidateType ?? null,
+    };
+  }
+
+  /** Why WebRTC failed (null if it succeeded or hasn't been attempted). */
+  get webrtcFailReason(): string | null {
+    return this._rtcTransport?.failReason ?? this._webrtcFailReason;
+  }
+
+  /** Whether the connection is relayed through a TURN server. */
+  get isRelayed(): boolean {
+    return this._rtcTransport?.localCandidateType === 'relay';
+  }
+
+  /**
+   * Get cached WebRTC stats. Polls getStats() at most once per second
+   * to avoid performance overhead. Returns null when not on WebRTC.
+   */
+  async pollWebrtcStats(): Promise<WebRTCStats | null> {
+    if (!this._rtcTransport?.ready) return this._cachedStats;
+    const now = performance.now();
+    if (now - this._lastStatsPoll < 1000) return this._cachedStats;
+    this._lastStatsPoll = now;
+    this._cachedStats = await this._rtcTransport.pollStats();
+    return this._cachedStats;
   }
 
   constructor() {
@@ -267,6 +314,8 @@ export class Network {
       this.ws.onopen = () => {
         this.connected = true;
         this.startPing();
+        // Start probing STUN servers early so results are cached by match time
+        warmupIcePool();
         resolve();
       };
 
@@ -430,6 +479,7 @@ export class Network {
 
     // Check if WebRTC is available in this browser
     if (typeof RTCPeerConnection === 'undefined') {
+      this._webrtcFailReason = 'Browser does not support WebRTC';
       console.log('[WebRTC] Not available in this browser — using WebSocket');
       return;
     }
@@ -460,11 +510,17 @@ export class Network {
       }
     };
 
-    // When DataChannel closes, fall back to WS
+    // When DataChannel closes, fall back to WS — and retry once if failure was fast
     this._rtcTransport.events.onClose = () => {
       if (this._activeTransport?.type === 'webrtc') {
         this._activeTransport = this._wsTransport;
         console.log('[NET] Fell back to WebSocket transport');
+      }
+      // One retry if the first attempt failed quickly (< 3s) and we haven't retried yet
+      if (!this._webrtcRetried && this._rtcTransport && !this._rtcTransport.ready) {
+        this._webrtcRetried = true;
+        console.log('[WebRTC] Fast failure — scheduling one retry in 2s');
+        setTimeout(() => this._retryWebRTC(), 2000);
       }
     };
 
@@ -493,9 +549,13 @@ export class Network {
 
   private _handleRtcIce(candidate: string): void {
     if (!this._rtcTransport) return;
-    this._rtcTransport.handleIceCandidate(candidate).catch((err) => {
-      console.warn('[WebRTC] ICE candidate failed:', err);
-    });
+    try {
+      this._rtcTransport.handleIceCandidate(candidate).catch((err) => {
+        console.warn('[WebRTC] ICE candidate failed:', err);
+      });
+    } catch (err) {
+      console.warn('[WebRTC] Malformed ICE candidate JSON:', err);
+    }
   }
 
   private _cleanupWebRTC(): void {
@@ -503,7 +563,62 @@ export class Network {
       this._rtcTransport.close();
       this._rtcTransport = null;
     }
+    this._webrtcRetried = false;
+    this._webrtcFailReason = null;
+    this._cachedStats = null;
     // Reset active transport to WS
     this._activeTransport = this._wsTransport;
+  }
+
+  /**
+   * Retry WebRTC once after a fast failure.
+   * Re-creates the transport with the same signaling callbacks.
+   * Only playerIndex=0 re-offers; playerIndex=1 waits for the re-offer.
+   */
+  private async _retryWebRTC(): Promise<void> {
+    if (!this.roomId) return; // match ended, don't retry
+    console.log('[WebRTC] Retrying connection...');
+
+    // Clean up old transport without resetting the retry flag
+    if (this._rtcTransport) {
+      this._rtcTransport.close();
+      this._rtcTransport = null;
+    }
+
+    const signaling = {
+      sendOffer: (sdp: string) => this.send({ type: 'rtc-offer', sdp }),
+      sendAnswer: (sdp: string) => this.send({ type: 'rtc-answer', sdp }),
+      sendIceCandidate: (candidate: string) => this.send({ type: 'rtc-ice', candidate }),
+    };
+
+    const iceServers = await fetchIceServers();
+    this._rtcTransport = new WebRTCTransport(iceServers, signaling);
+
+    this._rtcTransport.events.onOpen = () => {
+      if (this._rtcTransport) {
+        this._rtcTransport.onMessage = (buf: ArrayBuffer) => {
+          const view = new DataView(buf);
+          if (view.getUint8(0) === OP.SYNC_INPUT) {
+            view.setUint8(0, OP.OPPONENT_SYNC_INPUT);
+          }
+          this.handleBinaryMessage(buf);
+        };
+        this._activeTransport = this._rtcTransport;
+        console.log('[NET] Binary input path upgraded to WebRTC (UDP) on retry');
+      }
+    };
+
+    this._rtcTransport.events.onClose = () => {
+      if (this._activeTransport?.type === 'webrtc') {
+        this._activeTransport = this._wsTransport;
+        console.log('[NET] Retry fell back to WebSocket transport');
+      }
+    };
+
+    if (this.playerIndex === 0) {
+      this._rtcTransport.initiateOffer().catch((err) => {
+        console.warn('[WebRTC] Retry offer failed:', err);
+      });
+    }
   }
 }

@@ -6,6 +6,30 @@
 
 STUN alone fails for ~20% of NAT types (symmetric NAT). For reliable Mexico ↔ Germany connectivity, a TURN relay server is required. coturn is the standard open-source TURN server.
 
+## Public STUN Servers (Free)
+
+h4kken includes a multi-provider STUN pool that probes and selects the fastest servers automatically. No configuration needed — these are built-in:
+
+| Provider   | URL                                   | Notes                                    |
+|------------|---------------------------------------|------------------------------------------|
+| Google     | `stun:stun.l.google.com:19302`        | Most well-known, high availability       |
+| Cloudflare | `stun:stun.cloudflare.com:3478`       | Global anycast network, low latency      |
+| Mozilla    | `stun:stun.services.mozilla.com:3478` | Operated by Mozilla Foundation           |
+| Twilio     | `stun:global.stun.twilio.com:3478`    | Enterprise-grade, global PoPs            |
+
+STUN is free and sufficient for ~80% of NAT types. For the remaining ~20% (symmetric NAT), you need TURN.
+
+## Budget TURN Alternatives (for testing / small deployments)
+
+If you don't want to self-host coturn, these are affordable options:
+
+| Service | Price | Limit | URL |
+|---------|-------|-------|-----|
+| Open Relay (metered.ca) | Free | 20 GB/month | https://www.metered.ca/tools/openrelay/ |
+| FastTURN | €9/month | Unlimited | https://fastturn.net/ |
+
+> **Note**: There are no truly free public TURN servers with no limits. TURN relays media traffic (bandwidth-intensive), so providers must charge or cap usage. Self-hosting coturn on your own server is the most cost-effective option for production.
+
 ## Docker Compose Setup
 
 Add to your `compose.yaml` alongside the h4kken service:
