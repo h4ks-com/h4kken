@@ -39,7 +39,7 @@ const TURN_REALM = process.env.TURN_REALM || '';
 const TURN_PORT = process.env.TURN_PORT || '3478';
 const TURN_TLS_PORT = process.env.TURN_TLS_PORT || '5349';
 
-app.get('/api/turn-credentials', (_req, res) => {
+app.get('/api/turn-credentials', async (_req, res) => {
   if (TURN_SECRET && TURN_REALM) {
     // Self-hosted coturn — preferred (no bandwidth cap, lowest latency)
     const ttl = 86400;
@@ -64,32 +64,33 @@ app.get('/api/turn-credentials', (_req, res) => {
     return;
   }
 
-  // Fallback: metered.ca OpenRelay — free public TURN (20GB/month cap).
-  // Uses static-auth shared secret (RFC 5766 long-term credential mechanism).
-  // The secret is public knowledge (published at openrelayproject.org).
-  // [Ref: https://www.metered.ca/tools/openrelay/]
-  const OPENRELAY_SECRET = 'openrelayprojectsecret';
-  const OPENRELAY_HOST = 'staticauth.openrelay.metered.ca';
-  const ttl = 86400;
-  const expiry = Math.floor(Date.now() / 1000) + ttl;
-  const username = `${expiry}:h4kken`;
-  const credential = crypto.createHmac('sha1', OPENRELAY_SECRET).update(username).digest('base64');
+  // Fallback: metered.ca OpenRelay — free 20GB/month TURN via REST API.
+  // The old static-auth endpoint (staticauth.openrelay.metered.ca) is dead/unreachable.
+  // The REST API endpoint returns geo-routed servers (a.relay.metered.ca) that actually work.
+  // Requires a free API key: https://www.metered.ca/tools/openrelay/
+  const METERED_API_KEY = process.env.METERED_API_KEY || '';
+  const METERED_APP = process.env.METERED_APP || 'h4kken';
 
-  res.json({
-    iceServers: [
-      {
-        urls: [
-          `turn:${OPENRELAY_HOST}:80`,
-          `turn:${OPENRELAY_HOST}:80?transport=tcp`,
-          `turn:${OPENRELAY_HOST}:443`,
-          `turns:${OPENRELAY_HOST}:443?transport=tcp`,
-        ],
-        username,
-        credential,
-      },
-    ],
-    source: 'openrelay',
-  });
+  if (!METERED_API_KEY) {
+    // No TURN at all — clients rely on STUN only (P2P direct)
+    res.json({ iceServers: [], source: 'stun-only' });
+    return;
+  }
+
+  try {
+    const url = `https://${METERED_APP}.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`metered.ca: ${resp.status}`);
+    const iceServers = (await resp.json()) as Array<{
+      urls: string | string[];
+      username?: string;
+      credential?: string;
+    }>;
+    res.json({ iceServers, source: 'metered' });
+  } catch (err) {
+    console.warn('[TURN] metered.ca API failed:', err);
+    res.json({ iceServers: [], source: 'stun-only' });
+  }
 });
 
 app.post('/api/debug', (req, res) => {
@@ -426,7 +427,8 @@ server.listen(PORT, () => {
   console.log(`  ╚═╝  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝`);
   console.log(`\n  Server running on http://localhost:${PORT}`);
   if (TURN_SECRET) console.log(`  TURN relay: ${TURN_REALM}:${TURN_PORT} (self-hosted coturn)`);
-  else console.log('  TURN relay: metered.ca OpenRelay (free, 20GB/month cap)');
+  else if (process.env.METERED_API_KEY) console.log('  TURN relay: metered.ca (free, 20GB/month)');
+  else console.log('  TURN: disabled (set TURN_SECRET or METERED_API_KEY)');
   console.log();
 });
 
