@@ -1,13 +1,41 @@
 {
   "compilerOptions": {
+    // ES2022 matches the client config — Bun runtime supports all ES2022 features natively.
     "target": "ES2022",
+
+    // NodeNext required for Bun/Node interop: uses .js extensions in emitted code,
+    // resolves package.json "exports" correctly, and supports top-level await in .mts.
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+
+    // Server builds to dist/ — the production container runs `bun dist/server.js`.
+    // Client assets (from Vite) land in dist/client/ alongside it.
     "outDir": "dist",
+
+    // Same strict settings as client — shared types (InputState, InputCodec) are
+    // imported by both configs, so type safety must be identical to avoid desync.
     "strict": true,
+
+    // Server-side only: no DOM APIs. ES2022 provides structuredClone for snapshot cloning.
     "lib": ["ES2022"],
+
+    // Provides types for process.env, Buffer, node:http, node:path, etc.
+    // Bun is Node-compatible for these APIs.
     "types": ["node"],
-    "skipLibCheck": true
+
+    // Same rationale as client: skip node_modules .d.ts checking.
+    "skipLibCheck": true,
+
+    // Incremental rebuild for server.ts — fast iteration on signaling/matchmaking code.
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo.server",
+
+    // Prevent case-sensitivity mismatches between dev (macOS) and prod (Linux container).
+    "forceConsistentCasingInFileNames": true,
+
+    // Source maps for server: Bun respects them in stack traces, making production
+    // crash logs point to the original .ts line instead of compiled .js offsets.
+    "sourceMap": true
   },
   "include": ["server.ts"]
 }
