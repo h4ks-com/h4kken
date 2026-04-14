@@ -446,7 +446,15 @@ export class Network {
     // When DataChannel opens, switch binary path from WS to WebRTC
     this._rtcTransport.events.onOpen = () => {
       if (this._rtcTransport) {
-        this._rtcTransport.onMessage = (buf: ArrayBuffer) => this.handleBinaryMessage(buf);
+        this._rtcTransport.onMessage = (buf: ArrayBuffer) => {
+          // P2P path: peer sends SYNC_INPUT (0x01) — flip to OPPONENT_SYNC_INPUT (0x02)
+          // because on the server-relay path the server does this flip for us.
+          const view = new DataView(buf);
+          if (view.getUint8(0) === OP.SYNC_INPUT) {
+            view.setUint8(0, OP.OPPONENT_SYNC_INPUT);
+          }
+          this.handleBinaryMessage(buf);
+        };
         this._activeTransport = this._rtcTransport;
         console.log('[NET] Binary input path upgraded to WebRTC (UDP)');
       }
