@@ -100,6 +100,10 @@ export class Game {
   private _pipeline: DefaultRenderingPipeline | null = null;
   private botAI = new BotAI();
   _netOverlay: NetworkOverlay | null = null;
+  // Practice pause menu (ESC toggled)
+  private _practiceMenuEl: HTMLDivElement | null = null;
+  private _practicePaused = false;
+  private _escHandler: ((e: KeyboardEvent) => void) | null = null;
   // Configurable input delay: local input is scheduled N frames into the future.
   // This reduces rollback depth on high-latency links by giving remote inputs
   // more time to arrive before the frame is simulated.
@@ -350,6 +354,10 @@ export class Game {
       this._netOverlay = new NetworkOverlay(this.network, () => this.forfeit());
     } else {
       this.rollbackManager = null;
+      // F3 overlay available in practice mode too (FPS/frame display)
+      this._netOverlay?.dispose();
+      this._netOverlay = new NetworkOverlay(null, undefined, 'practice');
+      this._createPracticeMenu();
     }
     this._diag = makeDiag();
     this._diagWindowStart = performance.now();
@@ -389,6 +397,128 @@ export class Game {
     this.ui.hideAllScreens();
     this.ui.showScreen('menu-screen');
     this._mobileControls?.hide();
+  }
+
+  /** Leave practice mode — return to main menu. */
+  leavePractice() {
+    this._destroyPracticeMenu();
+    this._netOverlay?.dispose();
+    this._netOverlay = null;
+    this.rollbackManager = null;
+    this.bgm.stop();
+    this.isPractice = false;
+    this._inputDelayLocked = false;
+    this._inputDelayFrames = 0;
+    this.state = GAME_STATE.MENU;
+    this.ui.hideAllScreens();
+    this.ui.showScreen('menu-screen');
+    this._mobileControls?.hide();
+    this.fightCamera.reset();
+  }
+
+  /** Create the ESC-toggled practice pause menu. */
+  private _createPracticeMenu(): void {
+    this._destroyPracticeMenu();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'practice-menu';
+    overlay.style.cssText = [
+      'position: fixed',
+      'inset: 0',
+      'display: none',
+      'z-index: 9998',
+      'background: rgba(0,0,0,0.6)',
+      'justify-content: center',
+      'align-items: center',
+    ].join(';');
+
+    const panel = document.createElement('div');
+    panel.style.cssText = [
+      'background: rgba(0,0,0,0.85)',
+      'border: 1px solid #555',
+      'border-radius: 8px',
+      'padding: 24px 32px',
+      'text-align: center',
+      'font-family: Orbitron, monospace',
+      'color: #fff',
+      'min-width: 220px',
+    ].join(';');
+
+    const title = document.createElement('div');
+    title.textContent = 'PAUSED';
+    title.style.cssText =
+      'font-size: 18px; font-weight: 700; margin-bottom: 16px; letter-spacing: 2px;';
+    panel.appendChild(title);
+
+    const btnStyle = [
+      'display: block',
+      'width: 100%',
+      'margin: 8px 0',
+      'padding: 8px 16px',
+      'font-family: Orbitron, monospace',
+      'font-size: 13px',
+      'cursor: pointer',
+      'border-radius: 4px',
+      'border: 1px solid #666',
+      'letter-spacing: 1px',
+    ].join(';');
+
+    const btnResume = document.createElement('button');
+    btnResume.textContent = 'RESUME';
+    btnResume.style.cssText = `${btnStyle};background: #333; color: #0f0;`;
+    btnResume.addEventListener('click', () => this._togglePracticeMenu());
+    panel.appendChild(btnResume);
+
+    const btnControls = document.createElement('button');
+    btnControls.textContent = 'CONTROLS';
+    btnControls.style.cssText = `${btnStyle};background: #333; color: #adf;`;
+    btnControls.addEventListener('click', () => {
+      this._togglePracticeMenu();
+      this.ui.showScreen('controls-screen');
+    });
+    panel.appendChild(btnControls);
+
+    const btnExit = document.createElement('button');
+    btnExit.textContent = 'EXIT TO MENU';
+    btnExit.style.cssText = `${btnStyle};background: #600; color: #fff; border-color: #f44;`;
+    btnExit.addEventListener('click', () => this.leavePractice());
+    panel.appendChild(btnExit);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    this._practiceMenuEl = overlay;
+
+    // ESC key handler for practice mode
+    this._escHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && this.isPractice) {
+        e.preventDefault();
+        // If controls screen is showing, go back to game
+        if (this.ui.controlsScreen?.classList.contains('active')) {
+          this.ui.hideAllScreens();
+          return;
+        }
+        this._togglePracticeMenu();
+      }
+    };
+    document.addEventListener('keydown', this._escHandler);
+  }
+
+  private _togglePracticeMenu(): void {
+    if (!this._practiceMenuEl) return;
+    this._practicePaused = !this._practicePaused;
+    this._practiceMenuEl.style.display = this._practicePaused ? 'flex' : 'none';
+  }
+
+  private _destroyPracticeMenu(): void {
+    if (this._escHandler) {
+      document.removeEventListener('keydown', this._escHandler);
+      this._escHandler = null;
+    }
+    if (this._practiceMenuEl) {
+      this._practiceMenuEl.remove();
+      this._practiceMenuEl = null;
+    }
+    this._practicePaused = false;
   }
 
   startPractice() {
@@ -514,6 +644,7 @@ export class Game {
 
   // Practice / legacy path: immediate input, no network sync
   private _fixedUpdatePractice() {
+    if (this._practicePaused) return;
     const rawInput = this.input.update();
     if (this.state !== GAME_STATE.FIGHTING && this.state !== GAME_STATE.PRACTICE) return;
 
@@ -1023,6 +1154,7 @@ export class Game {
       this._mobileControls?.hide();
       this._netOverlay?.dispose();
       this._netOverlay = null;
+      this._destroyPracticeMenu();
       this._inputDelayLocked = false;
       this._inputDelayFrames = 0;
       this.state = GAME_STATE.MENU;

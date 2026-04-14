@@ -40,29 +40,55 @@ const TURN_PORT = process.env.TURN_PORT || '3478';
 const TURN_TLS_PORT = process.env.TURN_TLS_PORT || '5349';
 
 app.get('/api/turn-credentials', (_req, res) => {
-  if (!TURN_SECRET || !TURN_REALM) {
-    // No TURN configured — clients will rely on STUN only
-    res.json({ iceServers: [] });
+  if (TURN_SECRET && TURN_REALM) {
+    // Self-hosted coturn — preferred (no bandwidth cap, lowest latency)
+    const ttl = 86400;
+    const expiry = Math.floor(Date.now() / 1000) + ttl;
+    const username = `${expiry}:h4kken`;
+    const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
+
+    res.json({
+      iceServers: [
+        {
+          urls: [
+            `turn:${TURN_REALM}:${TURN_PORT}?transport=udp`,
+            `turn:${TURN_REALM}:${TURN_PORT}?transport=tcp`,
+            `turns:${TURN_REALM}:${TURN_TLS_PORT}?transport=tcp`,
+          ],
+          username,
+          credential,
+        },
+      ],
+      source: 'coturn',
+    });
     return;
   }
-  // Credential valid for 24 hours (coturn default)
+
+  // Fallback: metered.ca OpenRelay — free public TURN (20GB/month cap).
+  // Uses static-auth shared secret (RFC 5766 long-term credential mechanism).
+  // The secret is public knowledge (published at openrelayproject.org).
+  // [Ref: https://www.metered.ca/tools/openrelay/]
+  const OPENRELAY_SECRET = 'openrelayprojectsecret';
+  const OPENRELAY_HOST = 'staticauth.openrelay.metered.ca';
   const ttl = 86400;
   const expiry = Math.floor(Date.now() / 1000) + ttl;
   const username = `${expiry}:h4kken`;
-  const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
+  const credential = crypto.createHmac('sha1', OPENRELAY_SECRET).update(username).digest('base64');
 
   res.json({
     iceServers: [
       {
         urls: [
-          `turn:${TURN_REALM}:${TURN_PORT}?transport=udp`,
-          `turn:${TURN_REALM}:${TURN_PORT}?transport=tcp`,
-          `turns:${TURN_REALM}:${TURN_TLS_PORT}?transport=tcp`,
+          `turn:${OPENRELAY_HOST}:80`,
+          `turn:${OPENRELAY_HOST}:80?transport=tcp`,
+          `turn:${OPENRELAY_HOST}:443`,
+          `turns:${OPENRELAY_HOST}:443?transport=tcp`,
         ],
         username,
         credential,
       },
     ],
+    source: 'openrelay',
   });
 });
 
@@ -399,8 +425,8 @@ server.listen(PORT, () => {
   console.log(`  ██║  ██║     ██║██║  ██╗██║  ██╗███████╗██║ ╚████║`);
   console.log(`  ╚═╝  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝`);
   console.log(`\n  Server running on http://localhost:${PORT}`);
-  if (TURN_SECRET) console.log(`  TURN relay: ${TURN_REALM}:${TURN_PORT}`);
-  else console.log('  TURN: disabled (set TURN_SECRET to enable)');
+  if (TURN_SECRET) console.log(`  TURN relay: ${TURN_REALM}:${TURN_PORT} (self-hosted coturn)`);
+  else console.log('  TURN relay: metered.ca OpenRelay (free, 20GB/month cap)');
   console.log();
 });
 

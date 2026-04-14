@@ -24,10 +24,12 @@ import type { WebRTCStats } from '../transport/WebRTCTransport';
 /** Callback for forfeit action, wired up by Game.ts */
 type ForfeitCallback = () => void;
 
+type OverlayMode = 'online' | 'practice';
+
 export class NetworkOverlay {
   private _el: HTMLDivElement | null = null;
   private _visible = false;
-  private _network: Network;
+  private _network: Network | null;
   private _keyHandler: ((e: KeyboardEvent) => void) | null = null;
   private _forfeitBtn: HTMLButtonElement | null = null;
   private _onForfeit: ForfeitCallback | null = null;
@@ -39,7 +41,7 @@ export class NetworkOverlay {
   // Cached WebRTC stats (polled at ~1s intervals, not every frame)
   private _stats: WebRTCStats | null = null;
 
-  constructor(network: Network, onForfeit?: ForfeitCallback) {
+  constructor(network: Network | null, onForfeit?: ForfeitCallback, _mode: OverlayMode = 'online') {
     this._network = network;
     this._onForfeit = onForfeit ?? null;
     this._createDOM();
@@ -121,6 +123,17 @@ export class NetworkOverlay {
 
     const fps = engineFps > 0 ? Math.round(engineFps) : this._avgFps();
 
+    // Practice mode: lightweight display (FPS + frame only)
+    if (!this._network) {
+      const textNode = this._el.firstChild;
+      if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+        textNode.textContent = `FPS: ${fps}  Frame: ${frame}\nMode: PRACTICE`;
+      }
+      this._el.style.color = '#0f0';
+      if (this._forfeitBtn) this._forfeitBtn.style.color = '#fff';
+      return;
+    }
+
     const n = this._network;
     const rtt = n.rtt;
     const transport = n.transportType;
@@ -169,6 +182,11 @@ export class NetworkOverlay {
       const s = this._stats;
       if (s.rttMs > 0) out += `\nP2P RTT: ${s.rttMs}ms`;
       out += `\nDC Buffer: ${s.bufferedAmount}B  Lost: ${s.packetsLost}`;
+      if (n.isRelayed && s.bytesSent > 0) {
+        const kbSent = (s.bytesSent / 1024).toFixed(1);
+        const kbRecv = (s.bytesReceived / 1024).toFixed(1);
+        out += `\nTURN: ↑${kbSent}KB ↓${kbRecv}KB`;
+      }
     }
     return out;
   }

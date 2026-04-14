@@ -55,6 +55,10 @@ export interface WebRTCStats {
   availableOutgoingBitrate: number;
   /** DataChannel bufferedAmount in bytes. */
   bufferedAmount: number;
+  /** Total bytes sent on the active candidate pair. */
+  bytesSent: number;
+  /** Total bytes received on the active candidate pair. */
+  bytesReceived: number;
 }
 
 /** Events emitted by WebRTCTransport. */
@@ -271,6 +275,8 @@ export class WebRTCTransport implements IGameTransport {
       let rttMs = 0;
       let packetsLost = 0;
       let packetsSent = 0;
+      let bytesSent = 0;
+      let bytesReceived = 0;
       let localType = this._localCandidateType ?? '?';
       let remoteType = this._remoteCandidateType ?? '?';
       let availableBitrate = 0;
@@ -282,6 +288,8 @@ export class WebRTCTransport implements IGameTransport {
           rttMs = Math.round(((pair.currentRoundTripTime as number) ?? 0) * 1000);
           packetsLost = (pair.packetsLost as number) ?? 0;
           packetsSent = (pair.packetsSent as number) ?? 0;
+          bytesSent = (pair.bytesSent as number) ?? 0;
+          bytesReceived = (pair.bytesReceived as number) ?? 0;
           availableBitrate = (pair.availableOutgoingBitrate as number) ?? 0;
 
           // Resolve candidate types from the report
@@ -306,6 +314,8 @@ export class WebRTCTransport implements IGameTransport {
         remoteCandidateType: remoteType,
         availableOutgoingBitrate: availableBitrate,
         bufferedAmount: this._dc?.bufferedAmount ?? 0,
+        bytesSent,
+        bytesReceived,
       };
     } catch {
       return null;

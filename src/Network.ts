@@ -197,9 +197,11 @@ async function fetchIceServers(): Promise<IceServerConfig[]> {
   const stunServers = await getBestStunServers();
   try {
     const res = await fetch('/api/turn-credentials');
-    const data = (await res.json()) as { iceServers: IceServerConfig[] };
+    const data = (await res.json()) as { iceServers: IceServerConfig[]; source?: string };
     if (data.iceServers.length > 0) {
-      console.log('[ICE] Using self-hosted TURN relay + probed STUN');
+      const src =
+        data.source === 'openrelay' ? 'metered.ca OpenRelay (free)' : 'self-hosted coturn';
+      console.log(`[ICE] TURN via ${src} + probed STUN`);
       return [...stunServers, ...data.iceServers];
     }
   } catch {
