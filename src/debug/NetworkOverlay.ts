@@ -14,15 +14,11 @@
 //   2. WebRTC status line: connected/connecting/failed + reason
 //   3. ICE state, candidate types, P2P RTT (when on WebRTC)
 //   4. Rollback netcode stats (rollbacks, misprediction, stalls)
-//   5. Forfeit button
 // ============================================================
 
 import type { RollbackManager } from '../game/RollbackManager';
 import type { Network } from '../Network';
 import type { WebRTCStats } from '../transport/WebRTCTransport';
-
-/** Callback for forfeit action, wired up by Game.ts */
-type ForfeitCallback = () => void;
 
 type OverlayMode = 'online' | 'practice';
 
@@ -31,8 +27,6 @@ export class NetworkOverlay {
   private _visible = false;
   private _network: Network | null;
   private _keyHandler: ((e: KeyboardEvent) => void) | null = null;
-  private _forfeitBtn: HTMLButtonElement | null = null;
-  private _onForfeit: ForfeitCallback | null = null;
 
   // FPS tracking (rolling average over last 60 frames)
   private _fpsSamples: number[] = [];
@@ -41,9 +35,8 @@ export class NetworkOverlay {
   // Cached WebRTC stats (polled at ~1s intervals, not every frame)
   private _stats: WebRTCStats | null = null;
 
-  constructor(network: Network | null, onForfeit?: ForfeitCallback, _mode: OverlayMode = 'online') {
+  constructor(network: Network | null, _mode: OverlayMode = 'online') {
     this._network = network;
-    this._onForfeit = onForfeit ?? null;
     this._createDOM();
     this._bindToggle();
   }
@@ -68,29 +61,7 @@ export class NetworkOverlay {
       'white-space: pre',
     ].join(';');
 
-    // Forfeit button
-    const btn = document.createElement('button');
-    btn.textContent = 'FORFEIT';
-    btn.style.cssText = [
-      'display: block',
-      'margin-top: 6px',
-      'width: 100%',
-      'padding: 4px 8px',
-      'background: #a00',
-      'color: #fff',
-      'border: 1px solid #f44',
-      'border-radius: 3px',
-      'font-family: monospace',
-      'font-size: 11px',
-      'cursor: pointer',
-    ].join(';');
-    btn.addEventListener('click', () => {
-      if (this._onForfeit) this._onForfeit();
-    });
-    this._forfeitBtn = btn;
-
     el.appendChild(document.createTextNode(''));
-    el.appendChild(btn);
     document.body.appendChild(el);
     this._el = el;
   }
@@ -130,7 +101,6 @@ export class NetworkOverlay {
         textNode.textContent = `FPS: ${fps}  Frame: ${frame}\nMode: PRACTICE`;
       }
       this._el.style.color = '#0f0';
-      if (this._forfeitBtn) this._forfeitBtn.style.color = '#fff';
       return;
     }
 
@@ -165,8 +135,6 @@ export class NetworkOverlay {
 
     // Apply RTT color to the whole overlay
     this._el.style.color = rttColor;
-    // Forfeit button always white
-    if (this._forfeitBtn) this._forfeitBtn.style.color = '#fff';
   }
 
   /** ICE state, candidate types, P2P RTT, DC buffer — only when on WebRTC. */
@@ -243,6 +211,5 @@ export class NetworkOverlay {
       this._el.remove();
       this._el = null;
     }
-    this._forfeitBtn = null;
   }
 }

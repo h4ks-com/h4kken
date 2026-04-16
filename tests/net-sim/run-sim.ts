@@ -9,6 +9,12 @@
 //
 // Expected output: table showing rollback count, avg depth,
 // misprediction %, stall frames per scenario × profile combo.
+//
+// Scope: this is a local regression harness. It is relevant because
+// it stress-tests rollback behavior, prediction quality, and determinism
+// under repeatable synthetic latency/jitter/loss before any browser,
+// TURN, ICE, or real-network validation. It does not prove WebRTC
+// connectivity or infrastructure correctness on its own.
 // ============================================================
 
 import { HeadlessClient, type HeadlessStats } from './HeadlessGame';

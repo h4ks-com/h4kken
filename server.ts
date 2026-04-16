@@ -64,33 +64,8 @@ app.get('/api/turn-credentials', async (_req, res) => {
     return;
   }
 
-  // Fallback: metered.ca OpenRelay — free 20GB/month TURN via REST API.
-  // The old static-auth endpoint (staticauth.openrelay.metered.ca) is dead/unreachable.
-  // The REST API endpoint returns geo-routed servers (a.relay.metered.ca) that actually work.
-  // Requires a free API key: https://www.metered.ca/tools/openrelay/
-  const METERED_API_KEY = process.env.METERED_API_KEY || '';
-  const METERED_APP = process.env.METERED_APP || 'h4kken';
-
-  if (!METERED_API_KEY) {
-    // No TURN at all — clients rely on STUN only (P2P direct)
-    res.json({ iceServers: [], source: 'stun-only' });
-    return;
-  }
-
-  try {
-    const url = `https://${METERED_APP}.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`;
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`metered.ca: ${resp.status}`);
-    const iceServers = (await resp.json()) as Array<{
-      urls: string | string[];
-      username?: string;
-      credential?: string;
-    }>;
-    res.json({ iceServers, source: 'metered' });
-  } catch (err) {
-    console.warn('[TURN] metered.ca API failed:', err);
-    res.json({ iceServers: [], source: 'stun-only' });
-  }
+  // No TURN configured — clients rely on STUN only for direct P2P.
+  res.json({ iceServers: [], source: 'stun-only' });
 });
 
 app.post('/api/debug', (req, res) => {
@@ -427,8 +402,7 @@ server.listen(PORT, () => {
   console.log(`  ╚═╝  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝`);
   console.log(`\n  Server running on http://localhost:${PORT}`);
   if (TURN_SECRET) console.log(`  TURN relay: ${TURN_REALM}:${TURN_PORT} (self-hosted coturn)`);
-  else if (process.env.METERED_API_KEY) console.log('  TURN relay: metered.ca (free, 20GB/month)');
-  else console.log('  TURN: disabled (set TURN_SECRET or METERED_API_KEY)');
+  else console.log('  TURN: disabled (set TURN_SECRET and TURN_REALM for coturn)');
   console.log();
 });
 

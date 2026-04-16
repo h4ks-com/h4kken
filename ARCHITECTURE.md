@@ -4,173 +4,90 @@
 
 - **Runtime / package manager**: Bun
 - **Bundler**: Vite
-- **Renderer**: Babylon.js 8 (left-handed coordinate system, Y-up)
-- **Language**: TypeScript (`strict: true`, `noUncheckedIndexedAccess: true`, no `any`)
-- **Lint / format / typecheck**: `bun run fix` (biome → tsc → tsc server → knip), stops on first failure
+- **Renderer**: Babylon.js 8
+- **Language**: TypeScript with strict checking
+- **Validation**: `bun run fix`, `bun run typecheck`, `bun run tests/net-sim/run-sim.ts`
 
----
+## Runtime model
 
-## Coordinate system
+H4KKEN is a client-rendered fighting game with a lightweight relay server.
 
-Babylon.js is **left-handed, Y-up**. Do not set `scene.useRightHandedSystem`.
-
-```
-Camera at Z = -10, looking toward +Z.
-+X = screen RIGHT   -X = screen LEFT
-+Y = up             -Y = down
-```
-
-Player 0 spawns at X = -3 (screen left), Player 1 at X = +3 (screen right).
-
----
+- The browser runs rendering, local simulation, rollback, input capture, UI, and audio.
+- The server handles static assets, matchmaking, room lifecycle, WebSocket relay, WebRTC signaling relay, health checks, and optional TURN credentials.
+- Online matches always start on WebSocket and try to upgrade the binary input path to WebRTC DataChannel in the background.
+- If WebRTC fails, gameplay continues on WebSocket without interrupting the match.
 
 ## Source layout
 
-```
+```text
 src/
-├── main.ts               Entry point — creates Game, calls game.init()
-├── constants.ts          Shared enums: FIGHTER_STATE, GAME_CONSTANTS, HIT_RESULT
-├── Audio.ts              Babylon.js Sound-based SFX + BGM managers
-├── Camera.ts             Orbiting fight camera (stays on the -Z side)
-├── Input.ts              Keyboard input, double-tap, tap-vs-hold detection
-├── Network.ts            WebSocket matchmaking and state sync
-├── Stage.ts              Arena geometry, lighting, shadow generator, sky shader
-├── UI.ts                 DOM HUD (health bars, timer, announcements, flash effects)
-│
-├── combat/
-│   ├── types.ts          Shared combat types: MoveData, HitResult, FighterLike, LEVEL, …
-│   ├── moves.ts          Move data table (MOVES) — all frame data, hitboxes, animations
-│   └── CombatSystem.ts   Pure functions: resolveMove, resolveHit, checkHitbox, resolveComboInput
-│
-├── fighter/
-│   ├── animations.ts     ANIM_CONFIG, AnimKey type, ANIM_POOLS, UAL clip name unions
-│   └── Fighter.ts        Character class: asset loading, skeleton, animation, physics, state machine
-│
-└── game/
-    ├── BotAI.ts          CPU opponent decision loop
-    └── Game.ts           Game loop, state machine (LOADING → MENU → FIGHTING …), round logic
+  main.ts                 Entry point
+  Audio.ts                Sound and music helpers
+  Camera.ts               Fight camera
+  Input.ts                Keyboard input state
+  Network.ts              Client networking and WebRTC upgrade path
+  Stage.ts                Arena setup and scene lighting
+  UI.ts                   HUD and menus
+  debug/
+    NetworkOverlay.ts     F3 diagnostics HUD
+  combat/
+    CombatSystem.ts       Hit detection and resolution
+    moves.ts              Move data
+    types.ts              Combat types
+  fighter/
+    Fighter.ts            Fighter entity, animation, physics
+    animations.ts         Animation metadata
+  game/
+    BotAI.ts              Practice opponent
+    Game.ts               Main orchestration, rollback, rounds, effects
+    InputCodec.ts         8-byte input packet encoding
+    NetworkEvents.ts      Network-to-game event glue
+    RollbackManager.ts    Prediction, snapshots, replay
+    SimWorker.ts          Fixed-step heartbeat
+  transport/
+    Transport.ts          Binary transport abstraction
+    WebRTCTransport.ts    DataChannel implementation
+    IceServerPool.ts      STUN probing
+
+server.ts                 HTTP + WebSocket server
+tests/net-sim/            Headless rollback simulation harness
 ```
 
-### Module responsibilities
+## Networking
 
-| Module | Responsibility |
-|--------|----------------|
-| `constants.ts` | Single source of truth for string enums (`FIGHTER_STATE`, `HIT_RESULT`) and numeric tuning (`GAME_CONSTANTS`) used across multiple modules |
-| `combat/types.ts` | Type hub for the combat subsystem — imported by `moves.ts`, `CombatSystem.ts`, and `Fighter.ts` |
-| `combat/moves.ts` | Data-only: the `MOVES` record with every move's frame data, damage, hitbox, and animation binding |
-| `combat/CombatSystem.ts` | Stateless functions operating on `FighterLike` values; no Babylon.js imports |
-| `fighter/animations.ts` | All animation metadata (`ANIM_CONFIG`), typed clip name unions, pools, and `pickRandom` |
-| `fighter/Fighter.ts` | Full fighter entity: Babylon.js asset loading, mesh/skeleton/animation management, physics, state machine |
-| `game/BotAI.ts` | Encapsulates bot decision state and produces `InputState` each tick |
-| `game/Game.ts` | Orchestrates scene setup, the 60 Hz fixed-step game loop, round management, hit sparks, and rendering |
+- **WebSocket** carries matchmaking, room control, countdown flow, round results, ping, and WebRTC signaling.
+- **WebRTC DataChannel** carries binary input frames with unordered, no-retransmit semantics.
+- **TURN** is optional and expected to be self-hosted coturn using HMAC auth (`use-auth-secret` / `static-auth-secret`).
+- **Fallback behavior** is intentional: no TURN means STUN-only attempt, and any WebRTC failure leaves the game on WebSocket.
 
----
+### Server endpoints
 
-## GLB / character pipeline
+- `GET /health` returns uptime, rooms, waiting players, and connections.
+- `GET /api/turn-credentials` returns coturn credentials when `TURN_SECRET` and `TURN_REALM` are configured; otherwise it returns `stun-only`.
 
-### Asset files
-Both are **Quaternius Universal Animation Library (CC0)** and safe to git-track publicly.
+## Rollback model
 
-- `public/assets/models/character.glb` — UAL1: character mesh (`Mannequin` + `Icosphere`) + skeleton + 46 animation clips
-- `public/assets/models/UAL2.glb` — UAL2: **animation-only** (same 65-bone rig), 21 extra clips (walk backwards, air juggle hits, kip-up, hook/uppercut/knee, victory variants, etc.)
+- Simulation runs at 60 Hz.
+- Both clients simulate locally and exchange compact input packets.
+- Remote inputs are predicted until confirmed.
+- On mismatch, the game restores a snapshot and replays deterministically.
+- Practice mode bypasses rollback and uses a local bot.
 
-### Loading (one-time, shared)
-`Fighter.loadAssets(scene)` loads both GLBs **in parallel** via `SceneLoader.ImportMeshAsync`.  
-UAL2 meshes are immediately hidden — it supplies animations only.
+## Rendering and assets
 
-Returns `SharedAssets`:
-```ts
-interface SharedAssets {
-  baseMeshes: AbstractMesh[];              // from character.glb only, disabled
-  baseSkeleton: Skeleton | null;
-  animGroups: Record<string, AnimationGroup>; // merged from both GLBs, keyed by game name
-}
-```
+- Babylon.js uses the default left-handed, Y-up coordinate system.
+- Fighters are animated from shared GLB assets and cloned skeletons.
+- Static stage content is aggressively frozen for performance.
+- Remote fighters use visual smoothing to hide small rollback corrections.
 
-### Typed animation config — `ANIM_CONFIG`
-All animation mappings live in `ANIM_CONFIG` in `fighter/animations.ts`, typed as `satisfies Record<string, AnimConfig>`.
+## Diagnostics and testing
 
-```ts
-const ANIM_CONFIG = {
-  idle:     { glb: 'Idle_Loop',       loop: true  },
-  walkBack: { glb: 'Walk_Bwd_Loop',   loop: true,  src: 'ual2' },
-  punch1:   { glb: 'Punch_Jab',       loop: false },
-  // …
-} satisfies Record<string, AnimConfig>;
-```
+- Press `F3` to toggle the network diagnostics overlay during matches.
+- `tests/net-sim/` is a local, headless harness for rollback behavior under simulated latency, jitter, and packet loss.
+- The net-sim harness validates determinism and rollback behavior, not real TURN, ICE, browser WebRTC, or deployment wiring.
 
-- `glb` is typed as `Ual1Clip | Ual2Clip` — a misspelled clip name is a **compile error**.
-- `src: 'ual2'` pulls from `UAL2.glb`; omitting `src` defaults to `'ual1'` (`character.glb`).
-- `loop`, `speed`, `blend` control playback.
+## Operational notes
 
-**To add a new animation:** add an entry to `ANIM_CONFIG` with the exact GLB clip name. The type system will reject any name not in the `Ual1Clip` or `Ual2Clip` union.
-
-### Per-fighter init
-`fighter.init(assets)`:
-1. Creates a `TransformNode` as the positional root.
-2. Clones the skeleton → unlinks bones from base TransformNodes.
-3. Clones each base mesh → parents to root, reassigns cloned skeleton.
-4. Calls `_cloneAnimGroups` → clones every animation group, remapping bone targets to the cloned skeleton via suffix-based bone name matching.
-5. Sets initial Y rotation via `_makeRootQuat(rotY)`.
-
-Player 1 gets a red tint by cloning and modifying `PBRMaterial.albedoColor`.
-
-### Facing / rotation
-The Quaternius mannequin natively faces **+Z**.  
-Facing angle is the world-space direction toward the opponent (from `Math.atan2`).
-
-```ts
-targetRotY = Math.PI / 2 - facingAngle;
-```
-
-This rotates the +Z-facing model to look in the `facingAngle` direction.
-
----
-
-## Lighting & shadows
-
-Defined in `Stage.setupLighting()`:
-- `HemisphericLight` — low intensity (0.25), **no specular** (`Color3.Black()`). Specular on hemisphere = plastic look.
-- `DirectionalLight` — sun, drives the `ShadowGenerator`.
-- `ShadowGenerator` — 2048 map, PCF filtering (`usePercentageCloserFiltering`).
-
-Arena floors use `PBRMaterial` (roughness ~0.9, metallic 0).  
-Background geometry (trees, mountains, pillars) uses `StandardMaterial` with `specularColor = Color3.Black()`.
-
-Fighter meshes are registered as shadow casters in `Game.createFighters()` via `stage.shadowGenerator`.
-
-Post-processing in `game/Game.ts`:
-- `DefaultRenderingPipeline` — bloom.
-- `ImageProcessingConfiguration` — ACES tone mapping, contrast 1.2.
-
----
-
-## Game loop
-
-Fixed timestep at 60 Hz via accumulator in `Game._gameLoop()`:
-1. Accumulate `engine.getDeltaTime()`.
-2. While accumulator ≥ tick duration: run one logic tick (input → `processInput` → `updatePhysics` → collision → combat).
-3. Every frame: `updateVisuals()` on each fighter, `Stage.update()` (flame flicker), `fightCamera.update()`, `updateHitParticles()`.
-
----
-
-## Audio
-
-`Audio.ts` wraps Babylon.js `Sound`. Requires side-effect imports at the top of the file:
-```ts
-import '@babylonjs/core/Audio/audioSceneComponent';
-import '@babylonjs/core/Audio/audioEngine';
-```
-
-- **Spatial sounds** (hit, block) — anchored to world position via `playAt(name, pos)`.
-- **Flat sounds** (announcer, KO bell, countdown) — via `play(name)`.
-- **Variants** — multiple files per sound name, cycled round-robin to avoid repetition.
-- **BGM** — handled separately in `Game.ts` via a plain `HTMLAudioElement` (avoids browser autoplay policy).
-
----
-
-## Multiplayer
-
-Player 0 is authoritative. Each frame Player 0 sends its full game state to Player 1 via the server (`Network`). Player 1 applies received state via `fighter.deserializeState()`. Both players send their local input every tick.
-
-Round results are sent by P0 only — the server relays them to P1.
+- The server is intentionally usable with zero env vars.
+- coturn integration must match the credentials generated by `server.ts`: same realm, HMAC shared secret, public listener IP, and open relay UDP port range.
+- Keep this file brief and current; the code remains the primary source of truth.

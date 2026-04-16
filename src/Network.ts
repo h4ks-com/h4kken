@@ -199,12 +199,7 @@ async function fetchIceServers(): Promise<IceServerConfig[]> {
     const res = await fetch('/api/turn-credentials');
     const data = (await res.json()) as { iceServers: IceServerConfig[]; source?: string };
     if (data.iceServers.length > 0) {
-      const src =
-        data.source === 'metered'
-          ? 'metered.ca (free)'
-          : data.source === 'coturn'
-            ? 'self-hosted coturn'
-            : (data.source ?? 'unknown');
+      const src = data.source === 'coturn' ? 'self-hosted coturn' : (data.source ?? 'unknown');
       console.log(`[ICE] TURN via ${src} + probed STUN`);
       return [...stunServers, ...data.iceServers];
     }
