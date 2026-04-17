@@ -23,3 +23,22 @@ package-lock.json
 .idea/
 *.swp
 *.swo
+
+# TypeScript incremental compilation cache
+.tsbuildinfo
+.tsbuildinfo.server
+
+# Local documentation kept out of upstream PRs
+docs/
+
+# Local-only configs (not for upstream)
+*.local
+
+# Test output artifacts
+tests/results/
+
+# TURN server config (contains credentials)
+coturn/
+
+# Runtime logs
+logs/

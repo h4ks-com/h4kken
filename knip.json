@@ -1,5 +1,5 @@
 {
-  "entry": ["server.ts"],
-  "project": ["src/**/*.ts"],
+  "entry": ["server.ts", "tests/net-sim/run-sim.ts"],
+  "project": ["src/**/*.ts", "tests/**/*.ts"],
   "ignoreBinaries": ["dist/server.js"]
 }

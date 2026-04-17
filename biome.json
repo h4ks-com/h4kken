@@ -7,7 +7,7 @@
     "defaultBranch": "main"
   },
   "files": {
-    "includes": ["src/**/*.ts", "server.ts", "vite.config.ts"]
+    "includes": ["src/**/*.ts", "server.ts", "vite.config.ts", "tests/**/*.ts"]
   },
   "formatter": {
     "enabled": true,
