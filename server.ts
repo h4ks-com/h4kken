@@ -19,7 +19,7 @@ app.use(express.json());
 // In production __dirname = dist/, so client assets are in dist/client/
 app.use(express.static(path.join(__dirname, 'client')));
 
-// ── Health endpoint — used by nginx/PM2/monitoring ──────────────
+// ── Health endpoint — used by reverse proxies and monitoring ────
 const startTime = Date.now();
 app.get('/health', (_req, res) => {
   res.json({
@@ -407,8 +407,8 @@ server.listen(PORT, () => {
 });
 
 // ── Graceful shutdown ───────────────────────────────────────────
-// Close WebSocket connections cleanly so PM2/systemd can restart
-// without clients seeing abrupt disconnects.
+// Close WebSocket connections cleanly so containers/process managers
+// can restart without clients seeing abrupt disconnects.
 function shutdown(signal: string) {
   console.log(`\n  [${signal}] Shutting down...`);
   // Stop accepting new connections
