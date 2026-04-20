@@ -57,6 +57,8 @@ export interface SharedAssets {
   baseMeshes: AbstractMesh[];
   baseSkeleton: Skeleton | null;
   animGroups: Record<string, AnimationGroup>;
+  /** Runtime uniform scale applied to the fighter's root node */
+  scale?: number;
 }
 
 const GC = GAME_CONSTANTS;
@@ -235,42 +237,42 @@ export class Fighter {
     }
   }
 
-  static async loadAssets(scene: Scene, onProgress?: (p: number) => void): Promise<SharedAssets> {
-    // Load both packs in parallel — UAL2 shares the exact same 65-bone rig as UAL1.
-    const [result, ual2] = await Promise.all([
-      SceneLoader.ImportMeshAsync(null, '/assets/models/', 'character.glb', scene),
-      SceneLoader.ImportMeshAsync(null, '/assets/models/', 'UAL2.glb', scene),
-    ]);
+  static async loadAssets(
+    scene: Scene,
+    characterId = 'beano',
+    onProgress?: (p: number) => void,
+  ): Promise<SharedAssets> {
+    // Each <id>.glb is built offline by `bun run build:character`. It contains
+    // the character's mesh + Mixamo skeleton (T-pose rest) + every UAL clip
+    // referenced by ANIM_CONFIG, already retargeted onto the Mixamo bone names.
+    // Animation groups are named after their source UAL clip (e.g. "Walk_Loop"),
+    // so ANIM_CONFIG.glb lookup works unchanged.
+    const result = await SceneLoader.ImportMeshAsync(
+      null,
+      '/assets/models/',
+      `${characterId}.glb`,
+      scene,
+    );
     onProgress?.(1);
 
-    // UAL2 is animation-only — hide its meshes and nodes entirely.
-    for (const ag of ual2.animationGroups) ag.stop();
-    for (const m of ual2.meshes) m.setEnabled(false);
-    for (const n of ual2.transformNodes) n.setEnabled(false);
-
-    // Stop UAL1 animations — each fighter drives its own cloned groups.
     for (const ag of result.animationGroups) ag.stop();
 
-    // Build lookup tables keyed by clip name for fast resolution.
-    const ual1ByClip = new Map(result.animationGroups.map((ag) => [ag.name, ag]));
-    const ual2ByClip = new Map(ual2.animationGroups.map((ag) => [ag.name, ag]));
+    const clipByName = new Map(result.animationGroups.map((ag) => [ag.name, ag]));
 
     const animGroups: Record<string, AnimationGroup> = {};
     for (const [gameName, cfg] of Object.entries(ANIM_CONFIG) as Array<[string, AnimConfig]>) {
-      const src = cfg.src === 'ual2' ? ual2ByClip : ual1ByClip;
-      const found = src.get(cfg.glb);
-      if (found) {
-        animGroups[gameName] = found;
-      } else {
+      const found = clipByName.get(cfg.glb);
+      if (!found) {
         console.warn(
-          `[H4KKEN] Anim "${gameName}" (GLB: "${cfg.glb}", src: ${cfg.src ?? 'ual1'}) not found`,
+          `[H4KKEN] Anim "${gameName}" (clip: "${cfg.glb}", src: ${cfg.src ?? 'ual1'}) not found`,
         );
+        continue;
       }
+      animGroups[gameName] = found;
     }
 
     const baseSkeleton = result.skeletons[0] ?? null;
 
-    // Collect meshes that have geometry (skip the synthetic __root__ node).
     const baseMeshes: AbstractMesh[] = [];
     for (const m of result.meshes) {
       if (!m.getTotalVertices || m.getTotalVertices() === 0) continue;
@@ -279,21 +281,40 @@ export class Fighter {
     }
     for (const n of result.transformNodes) n.setEnabled(false);
 
+    // PBR materials from Mixamo GLBs expect IBL (environment texture) for indirect
+    // lighting. Without one, environmentIntensity=1 contributes nothing and the
+    // characters look dark compared to the StandardMaterial world. Boost direct light
+    // response and drop the missing IBL expectation.
+    for (const m of baseMeshes) {
+      if (m.material instanceof PBRMaterial) {
+        m.material.directIntensity = 2.5;
+        m.material.environmentIntensity = 0;
+      }
+    }
+
     return { baseMeshes, baseSkeleton, animGroups };
   }
 
   init(assets: SharedAssets) {
-    const { baseMeshes, baseSkeleton, animGroups } = assets;
+    const { baseMeshes, baseSkeleton, animGroups, scale } = assets;
 
     // Each fighter gets a fresh root TransformNode as its positional anchor
     this.rootNode = new TransformNode(`fighter${this.playerIndex}_root`, this.scene);
+    if (scale !== undefined && scale !== 1.0) {
+      // Uniform scale on root. Mesh origin sits at feet, so scaling around (0,0,0)
+      // keeps the character grounded.
+      this.rootNode.scaling.setAll(scale);
+    }
 
     const clonedSkeleton = baseSkeleton
       ? baseSkeleton.clone(`skeleton_f${this.playerIndex}`, `skel_${this.playerIndex}`)
       : null;
 
     if (clonedSkeleton) {
-      // Unlink bones from the base TransformNodes so animation drives them directly
+      // Unlink cloned bones from the base TransformNodes. The retargeted
+      // animations target TransformNodes by name; the per-fighter target
+      // remap below rewrites those to point at the cloned bones instead, so
+      // the link would just cause all fighters to mirror the base pose.
       Fighter._unlinkBonesFromTransformNodes(clonedSkeleton);
     }
 
@@ -306,23 +327,6 @@ export class Fighter {
       cloned.receiveShadows = true;
       if (clonedSkeleton && cloned.skeleton) cloned.skeleton = clonedSkeleton;
       this.meshes.push(cloned);
-    }
-
-    // Player 2 gets a red tint on its materials
-    if (this.playerIndex === 1) {
-      for (const mesh of this.meshes) {
-        if (!mesh.material) continue;
-        const mat = mesh.material.clone(`p2mat_${mesh.name}`);
-        if (!mat) continue;
-        if (mat instanceof PBRMaterial) {
-          mat.albedoColor = new Color3(0.7, 0.3, 0.3);
-          mat.emissiveColor = new Color3(0.15, 0.02, 0.02);
-        } else if (mat instanceof StandardMaterial) {
-          mat.diffuseColor = new Color3(0.7, 0.3, 0.3);
-          mat.emissiveColor = new Color3(0.15, 0.02, 0.02);
-        }
-        mesh.material = mat;
-      }
     }
 
     // Build suffix→Bone map so _cloneAnimGroups can remap targets to cloned bones
@@ -940,7 +944,7 @@ export class Fighter {
   }
 
   private _applyEmissiveFlash(flashActive: boolean) {
-    const idleEmissive = this.playerIndex === 1 ? new Color3(0.15, 0.02, 0.02) : Color3.Black();
+    const idleEmissive = Color3.Black();
     const emissive = flashActive ? new Color3(0.5, 0.5, 0.5) : idleEmissive;
     for (const mesh of this.meshes) {
       const mat = mesh.material;

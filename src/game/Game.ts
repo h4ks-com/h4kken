@@ -24,6 +24,7 @@ import { AudioManager, BgmManager } from '../Audio';
 import { FightCamera } from '../Camera';
 import { CombatSystem } from '../combat/CombatSystem';
 import { GAME_CONSTANTS } from '../constants';
+import { CHARACTERS, DEFAULT_P1, DEFAULT_P2 } from '../fighter/characters';
 import { Fighter, type SharedAssets } from '../fighter/Fighter';
 import { InputManager, type InputState } from '../Input';
 import { isTouchDevice, MobileControls, requestLandscapeFullscreen } from '../MobileControls';
@@ -63,6 +64,7 @@ export class Game {
   fighters: [Fighter | null, Fighter | null];
   localPlayerIndex: number;
   sharedAssets: SharedAssets | null;
+  p2Assets: SharedAssets | null = null;
   round: number;
   roundTimer: number;
   roundTimerAccum: number;
@@ -219,9 +221,19 @@ export class Game {
 
     this.stage = new Stage(this.scene);
 
-    this.sharedAssets = await Fighter.loadAssets(this.scene, (progress: number) => {
-      this.ui.setLoadingProgress(progress);
+    const p1 = CHARACTERS[DEFAULT_P1];
+    const p2 = CHARACTERS[DEFAULT_P2];
+    if (!p1 || !p2) throw new Error(`Missing character registry for ${DEFAULT_P1}/${DEFAULT_P2}`);
+
+    this.sharedAssets = await Fighter.loadAssets(this.scene, p1.id, (progress: number) => {
+      this.ui.setLoadingProgress(progress * 0.5);
     });
+    this.sharedAssets.scale = p1.scale;
+
+    this.p2Assets = await Fighter.loadAssets(this.scene, p2.id, (progress: number) => {
+      this.ui.setLoadingProgress(0.5 + progress * 0.5);
+    });
+    this.p2Assets.scale = p2.scale;
 
     await this.audio.load(this.scene);
     // Not awaited — MP3 decoding is slow on mobile; menu shows while tracks load.
@@ -254,13 +266,13 @@ export class Game {
   }
 
   createFighters() {
-    if (!this.sharedAssets) throw new Error('SharedAssets not loaded');
+    if (!this.sharedAssets || !this.p2Assets) throw new Error('SharedAssets not loaded');
 
     this.fighters[0] = new Fighter(0, this.scene);
     this.fighters[0].init(this.sharedAssets);
 
     this.fighters[1] = new Fighter(1, this.scene);
-    this.fighters[1].init(this.sharedAssets);
+    this.fighters[1].init(this.p2Assets);
 
     // BGM is now driven by polling in _updateHud rather than events,
     // so onSuperDeactivate is not needed for BGM purposes.
