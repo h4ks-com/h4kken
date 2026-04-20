@@ -2,7 +2,24 @@ services:
   h4kken:
     build: .
     ports:
-      - "3000:3000"
+      - "${H4KKEN_PORT:-3000}:3000"
     environment:
       - PORT=3000
+      # Public URL for WebSocket connections (used by Caddy/nginx proxy)
+      - PUBLIC_URL=${PUBLIC_URL:-}
     restart: unless-stopped
+
+  # ── Optional: self-hosted TURN relay for WebRTC ──────────
+  # Necessary when one or both players are behind symmetric NAT
+  # (common on mobile carriers and corporate networks).
+  # Uncomment and set TURN_SECRET + TURN_REALM to enable.
+  #
+  # coturn:
+  #   image: coturn/coturn:4.6
+  #   network_mode: host
+  #   volumes:
+  #     - ./coturn/turnserver.conf:/etc/turnserver.conf:ro
+  #   environment:
+  #     - TURN_SECRET=${TURN_SECRET:-changeme}
+  #     - TURN_REALM=${TURN_REALM:-h4kken.loust.pro}
+  #   restart: unless-stopped

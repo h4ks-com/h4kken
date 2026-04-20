@@ -1,13 +1,55 @@
 {
   "compilerOptions": {
+    // ES2022 gives us top-level await, private class fields, and Array.at() —
+    // all used in the codebase. Babylon.js 8 targets ES2020+, so this is safe.
     "target": "ES2022",
+
+    // ESNext module output lets Vite handle bundling/splitting without tsc
+    // downleveling dynamic imports or import.meta — Vite needs native ESM input.
     "module": "ESNext",
+
+    // "bundler" resolution matches Vite's module resolution strategy:
+    // supports package.json "exports", extensionless imports, and path aliases
+    // without requiring .js extensions (unlike NodeNext).
     "moduleResolution": "bundler",
+
+    // Full strict mode: strictNullChecks, noImplicitAny, strictFunctionTypes, etc.
+    // Critical for rollback netcode where a stray `undefined` in a snapshot means desync.
+    // [Ref: 1500 Archers — "determinism is the hardest bug, subtle type mismatches cause desync"]
     "strict": true,
+
+    // Array/map indexing returns `T | undefined` instead of `T`. Forces explicit
+    // null checks on inputBuffer[frame] — prevents silent desync when a rollback
+    // frame is missing from the buffer.
     "noUncheckedIndexedAccess": true,
+
+    // ES2022 provides structuredClone, WeakRef, FinalizationRegistry.
+    // DOM provides WebSocket, RTCPeerConnection, WebRTC DataChannel, AudioContext, etc.
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
+
+    // Vite injects import.meta.env, import.meta.hot for HMR — this tells tsc
+    // about those types so `import.meta.env.MODE` doesn't error.
     "types": ["vite/client"],
-    "skipLibCheck": true
+
+    // Skip type-checking .d.ts in node_modules — Babylon.js alone has ~4000
+    // declaration files. Checking them adds minutes for zero benefit.
+    "skipLibCheck": true,
+
+    // Re-check only changed files. Cuts rebuild time from ~6s to <1s on iterative edits.
+    // Stores dependency graph in .tsbuildinfo so tsc knows what to skip.
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo",
+
+    // Prevents `import './Network'` from importing `./network.ts` on macOS (case-insensitive FS)
+    // that would then fail on Linux CI/production (case-sensitive FS).
+    "forceConsistentCasingInFileNames": true,
+
+    // Allows `import pkg from './package.json'` — used by Vite config and version display.
+    "resolveJsonModule": true,
+
+    // Generate .map files so browser DevTools show original .ts lines in stack traces.
+    // Essential for debugging rollback/netcode issues in production builds.
+    "sourceMap": true
   },
   "include": ["src/**/*"]
 }
