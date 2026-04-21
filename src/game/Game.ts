@@ -1078,14 +1078,9 @@ export class Game {
         const p1Wins = winnerIdx === 0 ? localWins0 + 1 : localWins0;
         const p2Wins = winnerIdx === 1 ? localWins1 + 1 : localWins1;
         const matchOver = (winnerIdx === 0 ? p1Wins : p2Wins) >= GC.ROUNDS_TO_WIN;
-        this.network.sendRoundResult(
-          winnerIdx,
-          p1Wins,
-          p2Wins,
-          matchOver,
-          'idle', // Server broadcasts the authoritative anims
-          'idle',
-        );
+        const victoryAnim = winner.pickVictoryAnim();
+        const defeatAnim = loser.pickDefeatAnim(matchOver);
+        this.network.sendRoundResult(winnerIdx, p1Wins, p2Wins, matchOver, victoryAnim, defeatAnim);
       }
       // Visuals are applied when the server's roundResult arrives (NetworkEvents.ts)
       return;
@@ -1142,6 +1137,9 @@ export class Game {
       return;
     }
 
+    const winner = winnerIdx === 0 ? f1 : f2;
+    const loser = winnerIdx === 0 ? f2 : f1;
+
     // In multiplayer, defer to server's authoritative roundResult
     if (!this.isPractice) {
       if (this.state === GAME_STATE.FIGHTING) {
@@ -1149,15 +1147,15 @@ export class Game {
         const p1Wins = winnerIdx === 0 ? f1.wins + 1 : f1.wins;
         const p2Wins = winnerIdx === 1 ? f2.wins + 1 : f2.wins;
         const matchOver = (winnerIdx === 0 ? p1Wins : p2Wins) >= GC.ROUNDS_TO_WIN;
-        this.network.sendRoundResult(winnerIdx, p1Wins, p2Wins, matchOver, 'idle', 'idle');
+        const victoryAnim = winner.pickVictoryAnim();
+        const defeatAnim = loser.pickDefeatAnim(matchOver);
+        this.network.sendRoundResult(winnerIdx, p1Wins, p2Wins, matchOver, victoryAnim, defeatAnim);
       }
       return;
     }
 
     // Practice mode — apply immediately
     this.state = GAME_STATE.ROUND_END;
-    const winner = winnerIdx === 0 ? f1 : f2;
-    const loser = winnerIdx === 0 ? f2 : f1;
     winner.wins++;
     const matchOver = winner.wins >= GC.ROUNDS_TO_WIN;
     winner.setVictory();

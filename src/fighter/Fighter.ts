@@ -33,6 +33,8 @@ import { ANIM_CONFIG, ANIM_POOLS, type AnimConfig, type AnimKey, pickRandom } fr
 import { CompositeAnimController, isCompositeAnim } from './CompositeAnimations';
 import {
   cancelIntro,
+  pickDefeatAnim,
+  pickVictoryAnim,
   playIntroAnimation,
   playIntroAnimationExcluding,
   setDefeat,
@@ -1229,6 +1231,14 @@ export class Fighter {
         this.playAnimation('falling');
         break;
     }
+  }
+
+  pickVictoryAnim(): AnimKey {
+    return pickVictoryAnim(this);
+  }
+
+  pickDefeatAnim(matchOver: boolean): AnimKey {
+    return pickDefeatAnim(this, matchOver);
   }
 
   setVictory(animName?: AnimKey): AnimKey {
