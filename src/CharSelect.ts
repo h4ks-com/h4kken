@@ -10,12 +10,13 @@ import {
   TransformNode,
   Vector3,
 } from '@babylonjs/core';
+import type { AnimKey } from './fighter/animations';
 import { CHARACTERS, DEFAULT_P1, DEFAULT_P2 } from './fighter/characters';
 import type { SharedAssets } from './fighter/Fighter';
 
-const CYCLE_ANIMS = ['victorySmug', 'introTalking'] as const;
+const CYCLE_ANIMS: readonly AnimKey[] = ['victorySmug', 'introTalking'];
 const CYCLE_INTERVAL_MS = 4000;
-const FLOURISH_ANIM = 'victoryCelebrate';
+const FLOURISH_ANIM: AnimKey = 'victoryCelebrate';
 const FLOURISH_DURATION_MS = 2000;
 
 class SelectSlot {
@@ -24,7 +25,7 @@ class SelectSlot {
   private currentAssets: SharedAssets | null = null;
   private cycleInterval: ReturnType<typeof setInterval> | null = null;
   private cycleIndex = 0;
-  private cycleAnims: readonly string[] = CYCLE_ANIMS;
+  private cycleAnims: readonly AnimKey[] = CYCLE_ANIMS;
 
   constructor(
     scene: Scene,
@@ -40,7 +41,7 @@ class SelectSlot {
     this.positionNode.position.x = x;
   }
 
-  setCharacter(assets: SharedAssets, cycleAnims?: readonly string[]) {
+  setCharacter(assets: SharedAssets, cycleAnims?: readonly AnimKey[]) {
     this._clearCycle();
     for (const m of this.clonedMeshes) m.dispose();
     this.clonedMeshes = [];
@@ -58,7 +59,7 @@ class SelectSlot {
     this._startCycle();
   }
 
-  private _playAnim(name: string, loop: boolean) {
+  private _playAnim(name: AnimKey, loop: boolean) {
     const assets = this.currentAssets;
     if (!assets) return;
     const target = assets.animGroups[name];

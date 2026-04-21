@@ -6,6 +6,8 @@
 // (FBX ingestion) separate from presentation/gameplay tweaks (scale,
 // display name, thumbnails, future character-select metadata).
 
+import type { AnimKey } from './animations';
+
 interface CharacterMeta {
   /** Must match a build entry id → public/assets/models/<id>.glb */
   id: string;
@@ -16,7 +18,7 @@ interface CharacterMeta {
   /** Path to a UI thumbnail (future character-select screen) */
   thumbnail?: string;
   /** Animation cycle shown in the character selection screen */
-  selectAnims?: readonly string[];
+  selectAnims?: readonly AnimKey[];
 }
 
 export const CHARACTERS: Record<string, CharacterMeta> = {
