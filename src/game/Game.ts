@@ -20,7 +20,7 @@ import {
   Vector3,
   WebGPUEngine,
 } from '@babylonjs/core';
-import { AudioManager, BgmManager } from '../Audio';
+import { AudioManager, armAudioUnlockOnFirstGesture, BgmManager } from '../Audio';
 import { FightCamera } from '../Camera';
 import { CharSelect } from '../CharSelect';
 import { CombatSystem } from '../combat/CombatSystem';
@@ -110,6 +110,7 @@ export class Game {
   private _practiceMenuEl: HTMLDivElement | null = null;
   private _practicePaused = false;
   private _escHandler: ((e: KeyboardEvent) => void) | null = null;
+  private _mobileQualityRecoverTimer: ReturnType<typeof setInterval> | null = null;
   // Configurable input delay: local input is scheduled N frames into the future.
   // This reduces rollback depth on high-latency links by giving remote inputs
   // more time to arrive before the frame is simulated.
@@ -245,6 +246,7 @@ export class Game {
   }
 
   setupUIEvents() {
+    armAudioUnlockOnFirstGesture();
     this.ui.btnFindMatch?.addEventListener('click', () => {
       if (isTouchDevice()) requestLandscapeFullscreen();
       this.startCharSelect('online');
@@ -274,9 +276,11 @@ export class Game {
       loaded++;
     }
 
-    await this.audio.load(this.scene);
+    void this.audio.load(this.scene).catch((error) => {
+      console.warn('Audio preloading failed:', error);
+    });
     // Not awaited — MP3 decoding is slow on mobile; menu shows while tracks load.
-    this.bgm.load(this.scene);
+    void this.bgm.load(this.scene);
 
     this.charSelect = new CharSelect(this.scene, this.camera, this.allCharAssets);
     this.createFighters();
@@ -824,6 +828,36 @@ export class Game {
       options.optimizations.push(new HardwareScalingOptimization(2, 1.25, 0.25));
     }
     new SceneOptimizer(this.scene, options);
+    if (mobile) this._startMobileQualityRecovery();
+  }
+
+  private _startMobileQualityRecovery(): void {
+    if (this._mobileQualityRecoverTimer) return;
+
+    let stableSeconds = 0;
+    this._mobileQualityRecoverTimer = setInterval(() => {
+      const currentScaling = this.engine.getHardwareScalingLevel();
+      if (currentScaling <= 1) {
+        clearInterval(this._mobileQualityRecoverTimer ?? undefined);
+        this._mobileQualityRecoverTimer = null;
+        return;
+      }
+
+      const fps = this.engine.getFps();
+      if (fps >= 56) {
+        stableSeconds++;
+      } else {
+        stableSeconds = 0;
+      }
+
+      if (stableSeconds < 5) return;
+      stableSeconds = 0;
+
+      const nextScaling = Math.max(1, currentScaling - 0.125);
+      if (nextScaling < currentScaling) {
+        this.engine.setHardwareScalingLevel(nextScaling);
+      }
+    }, 1000);
   }
 
   // RollbackHost adapter — lets RollbackManager drive replay without circular deps

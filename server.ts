@@ -38,12 +38,20 @@ const TURN_SECRET = process.env.TURN_SECRET || '';
 const TURN_REALM = process.env.TURN_REALM || '';
 const TURN_PORT = process.env.TURN_PORT || '3478';
 const TURN_TLS_PORT = process.env.TURN_TLS_PORT || '5349';
+const TURN_CREDENTIAL_TTL_SEC = Math.max(
+  60,
+  Number.parseInt(process.env.TURN_CREDENTIAL_TTL_SEC || '600', 10) || 600,
+);
 
 app.get('/api/turn-credentials', async (_req, res) => {
+  res.set({
+    'Cache-Control': 'private, no-store, max-age=0',
+    Pragma: 'no-cache',
+  });
+
   if (TURN_SECRET && TURN_REALM) {
     // Self-hosted coturn — preferred (no bandwidth cap, lowest latency)
-    const ttl = 86400;
-    const expiry = Math.floor(Date.now() / 1000) + ttl;
+    const expiry = Math.floor(Date.now() / 1000) + TURN_CREDENTIAL_TTL_SEC;
     const username = `${expiry}:h4kken`;
     const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
 

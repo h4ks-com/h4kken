@@ -1,6 +1,6 @@
 import '@babylonjs/core/Audio/audioSceneComponent';
 import '@babylonjs/core/Audio/audioEngine';
-import { type Scene, Sound, type Vector3 } from '@babylonjs/core';
+import { Engine, type Scene, Sound, type Vector3 } from '@babylonjs/core';
 
 const SPATIAL_OPTS = {
   loop: false,
@@ -11,6 +11,31 @@ const SPATIAL_OPTS = {
   maxDistance: 100,
 } as const;
 
+const SPATIAL_LOAD_TIMEOUT_MS = 4000;
+
+function loadSoundWithSoftTimeout(
+  name: string,
+  url: string,
+  scene: Scene,
+  options: typeof SPATIAL_OPTS,
+  timeoutMs: number,
+): Promise<Sound> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (sound: Sound) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(sound);
+    };
+    const sound = new Sound(name, url, scene, () => finish(sound), options);
+    const timeoutId = setTimeout(() => {
+      console.warn(`[AUDIO] Timed out loading ${url} after ${timeoutMs}ms`);
+      finish(sound);
+    }, timeoutMs);
+  });
+}
+
 const BGM_OPTS = {
   loop: true,
   autoplay: false,
@@ -20,6 +45,37 @@ const BGM_OPTS = {
 const BGM_MASTER_VOL = 0.5;
 const BGM_POWER_VOL = BGM_MASTER_VOL * 1.2;
 const BGM_FADE_SEC = 0.4;
+
+let audioUnlockArmed = false;
+let audioUnlockHandled = false;
+
+export function armAudioUnlockOnFirstGesture(): void {
+  if (audioUnlockArmed || audioUnlockHandled) return;
+
+  const cleanup = () => {
+    window.removeEventListener('pointerdown', unlock, true);
+    window.removeEventListener('keydown', unlock, true);
+    audioUnlockArmed = false;
+    audioUnlockHandled = true;
+  };
+
+  const unlock = () => {
+    cleanup();
+    const audioEngine = Engine.audioEngine;
+    if (!audioEngine) return;
+    audioEngine.unlock();
+    const ctx = audioEngine.audioContext;
+    if (ctx?.state === 'suspended') {
+      void ctx.resume().catch(() => {
+        // Some browsers still reject resume() until a later gesture.
+      });
+    }
+  };
+
+  audioUnlockArmed = true;
+  window.addEventListener('pointerdown', unlock, { capture: true, once: true });
+  window.addEventListener('keydown', unlock, { capture: true, once: true });
+}
 
 // Both tracks run simultaneously at all times. Crossfading is just volume ramping —
 // the tracks never stop, so they stay perfectly time-aligned across loops.
@@ -149,8 +205,13 @@ export class AudioManager {
       const loaded: Sound[] = [];
       for (const file of files) {
         promises.push(
-          new Promise<void>((resolve) => {
-            const snd = new Sound(name, base + file, scene, resolve, SPATIAL_OPTS);
+          loadSoundWithSoftTimeout(
+            name,
+            base + file,
+            scene,
+            SPATIAL_OPTS,
+            SPATIAL_LOAD_TIMEOUT_MS,
+          ).then((snd) => {
             loaded.push(snd);
           }),
         );
@@ -193,6 +254,7 @@ export class AudioManager {
   playAt(name: string, pos: Vector3, volume = 1.0) {
     const snd = this._pickSpatial(name);
     if (!snd) return;
+    if (!snd.isReady()) return;
     snd.setPosition(pos);
     if (snd.isPlaying) snd.stop();
     snd.setVolume(volume);
