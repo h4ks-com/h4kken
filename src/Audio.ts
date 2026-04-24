@@ -11,6 +11,31 @@ const SPATIAL_OPTS = {
   maxDistance: 100,
 } as const;
 
+const SPATIAL_LOAD_TIMEOUT_MS = 4000;
+
+function loadSoundWithSoftTimeout(
+  name: string,
+  url: string,
+  scene: Scene,
+  options: typeof SPATIAL_OPTS,
+  timeoutMs: number,
+): Promise<Sound> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (sound: Sound) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(sound);
+    };
+    const sound = new Sound(name, url, scene, () => finish(sound), options);
+    const timeoutId = setTimeout(() => {
+      console.warn(`[AUDIO] Timed out loading ${url} after ${timeoutMs}ms`);
+      finish(sound);
+    }, timeoutMs);
+  });
+}
+
 const BGM_OPTS = {
   loop: true,
   autoplay: false,
@@ -149,10 +174,10 @@ export class AudioManager {
       const loaded: Sound[] = [];
       for (const file of files) {
         promises.push(
-          new Promise<void>((resolve) => {
-            const snd = new Sound(name, base + file, scene, resolve, SPATIAL_OPTS);
-            loaded.push(snd);
-          }),
+          loadSoundWithSoftTimeout(name, base + file, scene, SPATIAL_OPTS, SPATIAL_LOAD_TIMEOUT_MS)
+            .then((snd) => {
+              loaded.push(snd);
+            }),
         );
       }
       this.spatialSounds.set(name, loaded);
@@ -193,6 +218,7 @@ export class AudioManager {
   playAt(name: string, pos: Vector3, volume = 1.0) {
     const snd = this._pickSpatial(name);
     if (!snd) return;
+    if (!snd.isReady()) return;
     snd.setPosition(pos);
     if (snd.isPlaying) snd.stop();
     snd.setVolume(volume);
