@@ -4,9 +4,12 @@
 
 import {
   type AbstractMesh,
+  type AnimationGroup,
+  type Bone,
   type FreeCamera,
   Quaternion,
   type Scene,
+  type Skeleton,
   TransformNode,
   Vector3,
 } from '@babylonjs/core';
@@ -19,10 +22,16 @@ const CYCLE_INTERVAL_MS = 4000;
 const FLOURISH_ANIM: AnimKey = 'victoryCelebrate';
 const FLOURISH_DURATION_MS = 2000;
 
+function boneSuffix(name: string): string {
+  const idx = name.indexOf('-');
+  return idx >= 0 ? name.substring(idx + 1) : name;
+}
+
 class SelectSlot {
   private positionNode: TransformNode;
   private clonedMeshes: AbstractMesh[] = [];
-  private currentAssets: SharedAssets | null = null;
+  private currentAnimGroups: Record<string, AnimationGroup> = {};
+  private currentSkeleton: Skeleton | null = null;
   private cycleInterval: ReturnType<typeof setInterval> | null = null;
   private cycleIndex = 0;
   private cycleAnims: readonly AnimKey[] = CYCLE_ANIMS;
@@ -43,28 +52,50 @@ class SelectSlot {
 
   setCharacter(assets: SharedAssets, cycleAnims?: readonly AnimKey[]) {
     this._clearCycle();
-    for (const m of this.clonedMeshes) m.dispose();
-    this.clonedMeshes = [];
-    this.currentAssets = assets;
+    this.clear();
     this.cycleAnims = cycleAnims ?? CYCLE_ANIMS;
     this.positionNode.scaling.setAll(assets.scale ?? 1.0);
+
+    const clonedSkeleton = assets.baseSkeleton?.clone(
+      `cs_skeleton_${this.xOffset}`,
+      `cs_skel_${this.xOffset}`,
+    );
+    this.currentSkeleton = clonedSkeleton ?? null;
+
+    const boneByName = new Map<string, Bone>();
+    if (clonedSkeleton) {
+      for (const bone of clonedSkeleton.bones) {
+        boneByName.set(boneSuffix(bone.name), bone);
+      }
+    }
 
     for (const baseMesh of assets.baseMeshes) {
       const clone = baseMesh.clone(`cs_${this.xOffset}_${baseMesh.name}`, this.positionNode);
       if (!clone) continue;
       clone.setEnabled(true);
-      if (assets.baseSkeleton) clone.skeleton = assets.baseSkeleton;
+      if (clonedSkeleton && clone.skeleton) clone.skeleton = clonedSkeleton;
       this.clonedMeshes.push(clone);
     }
+
+    for (const [name, srcGroup] of Object.entries(assets.animGroups)) {
+      const clonedGroup = srcGroup.clone(`cs_${this.xOffset}_${name}`, (target) => {
+        if (target && typeof target === 'object' && 'name' in target) {
+          const mapped = boneByName.get(boneSuffix((target as { name: string }).name));
+          if (mapped) return mapped;
+        }
+        return target;
+      });
+      clonedGroup.stop();
+      this.currentAnimGroups[name] = clonedGroup;
+    }
+
     this._startCycle();
   }
 
   private _playAnim(name: AnimKey, loop: boolean) {
-    const assets = this.currentAssets;
-    if (!assets) return;
-    const target = assets.animGroups[name];
+    const target = this.currentAnimGroups[name];
     if (!target) return;
-    for (const ag of Object.values(assets.animGroups)) {
+    for (const ag of Object.values(this.currentAnimGroups)) {
       if (ag !== target) ag.stop();
     }
     target.play(loop);
@@ -94,16 +125,19 @@ class SelectSlot {
     this._clearCycle();
     this._playAnim(FLOURISH_ANIM, false);
     setTimeout(() => {
-      if (this.currentAssets) this._startCycle();
+      if (Object.keys(this.currentAnimGroups).length > 0) this._startCycle();
     }, FLOURISH_DURATION_MS);
   }
 
   clear() {
     this._clearCycle();
-    if (this.currentAssets) {
-      for (const ag of Object.values(this.currentAssets.animGroups)) ag.stop();
-      this.currentAssets = null;
+    for (const ag of Object.values(this.currentAnimGroups)) {
+      ag.stop();
+      ag.dispose();
     }
+    this.currentAnimGroups = {};
+    this.currentSkeleton?.dispose();
+    this.currentSkeleton = null;
     for (const m of this.clonedMeshes) m.dispose();
     this.clonedMeshes = [];
   }
@@ -224,6 +258,7 @@ export class CharSelect {
     if (this.mode !== 'online') return;
     this.opponentPresent = false;
     this.opponentReady = false;
+    this.localReady = false;
     this.opponentName = '';
     this.slot2.clear();
     this._renderP2Panel();
