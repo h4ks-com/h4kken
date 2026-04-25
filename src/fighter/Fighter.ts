@@ -54,6 +54,7 @@ import {
   handleStandingState,
   handleStunState,
 } from './FighterStateHandlers';
+import { type JiggleBoneConfig, JiggleSim } from './JiggleSim';
 
 export interface SharedAssets {
   baseMeshes: AbstractMesh[];
@@ -61,6 +62,8 @@ export interface SharedAssets {
   animGroups: Record<string, AnimationGroup>;
   /** Runtime uniform scale applied to the fighter's root node */
   scale?: number;
+  /** Spring-bone configs for secondary motion (e.g. breast jiggle). Set from CharacterMeta. */
+  jiggleBones?: readonly JiggleBoneConfig[];
 }
 
 const GC = GAME_CONSTANTS;
@@ -160,6 +163,7 @@ export class Fighter {
   _introTimeout: ReturnType<typeof setTimeout> | null = null;
   private _composite!: CompositeAnimController;
   private _skeleton: Skeleton | null = null;
+  private _jiggleSim: JiggleSim | null = null;
 
   // Visual interpolation for remote fighter — smooths rollback corrections
   // so the opponent doesn't visually teleport when mispredictions are corrected.
@@ -359,6 +363,10 @@ export class Fighter {
     this._composite = new CompositeAnimController(this.scene, this.playerIndex);
     this._composite.build(this.animGroups);
 
+    if (assets.jiggleBones?.length && clonedSkeleton) {
+      this._jiggleSim = new JiggleSim(clonedSkeleton, assets.jiggleBones);
+    }
+
     this.rootNode.position.copyFrom(this.position);
     // initRotY must match PI/2 - facingAngle used in updateVisuals().
     // P0 facingAngle=0  → PI/2;  P1 facingAngle=PI → -PI/2
@@ -375,6 +383,8 @@ export class Fighter {
       clearTimeout(this._introTimeout);
       this._introTimeout = null;
     }
+    this._jiggleSim?.dispose();
+    this._jiggleSim = null;
     this._destroySuperEffects();
     this._highlightLayer?.dispose();
     this._highlightLayer = null;
@@ -1003,6 +1013,10 @@ export class Fighter {
         mat.emissiveColor = emissive;
       }
     }
+  }
+
+  updateJiggle(deltaTimeMs: number) {
+    this._jiggleSim?.update(deltaTimeMs);
   }
 
   updateVisuals() {

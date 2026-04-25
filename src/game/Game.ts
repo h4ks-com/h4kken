@@ -272,6 +272,7 @@ export class Game {
         this.ui.setLoadingProgress((loaded + p) / charEntries.length);
       });
       assets.scale = meta.scale;
+      assets.jiggleBones = meta.jiggleBones;
       this.allCharAssets.set(meta.id, assets);
       loaded++;
     }
@@ -1279,6 +1280,8 @@ export class Game {
       } else {
         if (f1) f1.updateVisuals();
         if (f2) f2.updateVisuals();
+        if (f1) f1.updateJiggle(deltaTime * 1000);
+        if (f2) f2.updateJiggle(deltaTime * 1000);
       }
 
       if (f1 && f2) {

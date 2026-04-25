@@ -46,8 +46,10 @@ const SCRIPTS = path.join(ROOT, 'scripts');
 const MODELS = path.join(ROOT, 'public/assets/models');
 
 function runBlender(script: string, env: NodeJS.ProcessEnv): void {
-  console.log(`[build] blender -b -P ${script}`);
-  execFileSync(BLENDER, ['-b', '-P', path.join(SCRIPTS, script)], {
+  console.log(`[build] blender -b --factory-startup -P ${script}`);
+  // --factory-startup: skip user addons (e.g. APIRC, BlenderMCP) that can hang
+  // headless runs by trying to connect to non-existent IPC sockets.
+  execFileSync(BLENDER, ['-b', '--factory-startup', '-P', path.join(SCRIPTS, script)], {
     stdio: 'inherit',
     env: { ...process.env, ...env },
   });
@@ -173,29 +175,72 @@ async function retargetAndSerialize(char: CharacterSource): Promise<void> {
 async function main(): Promise<void> {
   fs.mkdirSync(MODELS, { recursive: true });
   const force = process.argv.includes('--force');
+  const forceUal = process.argv.includes('--force-ual');
+  const charArg = (() => {
+    const idx = process.argv.indexOf('--char');
+    return idx !== -1 ? process.argv[idx + 1] : null;
+  })();
+
+  if (charArg && !CHARACTERS.find((c) => c.id === charArg)) {
+    console.error(`[build] unknown character: "${charArg}". Valid ids: ${CHARACTERS.map((c) => c.id).join(', ')}`);
+    process.exit(1);
+  }
+
+  if (force) {
+    const affected = charArg ? [charArg] : CHARACTERS.map((c) => c.id);
+    console.warn(
+      `[build] WARNING: --force will regenerate ${affected.map((id) => `${id}_mesh.glb`).join(', ')} from source FBX, overwriting any manual mesh edits.`,
+    );
+  }
 
   // Step 1: export UAL animation packs (shared across all characters).
+  // --force only forces the selected character; use --force-ual to rebuild UAL packs too.
   const ual1Out = path.join(MODELS, 'ual1_anims.glb');
   const ualScript = path.join(SCRIPTS, 'export_ual_anims.py');
-  if (force || needsRebuild(ual1Out, UAL1_BLEND, ualScript)) {
+  if (forceUal || needsRebuild(ual1Out, UAL1_BLEND, ualScript)) {
     runBlender('export_ual_anims.py', { UAL_BLEND: UAL1_BLEND, UAL_OUT: ual1Out });
   } else {
     console.log('[build] ual1_anims.glb up to date');
   }
 
   const ual2Out = path.join(MODELS, 'ual2_anims.glb');
-  if (force || needsRebuild(ual2Out, UAL2_BLEND, ualScript)) {
+  if (forceUal || needsRebuild(ual2Out, UAL2_BLEND, ualScript)) {
     runBlender('export_ual_anims.py', { UAL_BLEND: UAL2_BLEND, UAL_OUT: ual2Out });
   } else {
     console.log('[build] ual2_anims.glb up to date');
   }
 
-  // Step 2 + 3: per character, export mesh + retarget + serialize.
-  for (const char of CHARACTERS) {
+  // Step 2 + 3: per character, export/copy mesh + inject bones + retarget + serialize.
+  const chars = charArg ? CHARACTERS.filter((c) => c.id === charArg) : CHARACTERS;
+  for (const char of chars) {
     const meshOut = path.join(MODELS, `${char.id}_mesh.glb`);
     const meshScript = path.join(SCRIPTS, 'export_mesh.py');
-    if (force || needsRebuild(meshOut, char.fbx, meshScript)) {
-      runBlender('export_mesh.py', { MESH_FBX: char.fbx, MESH_OUT: meshOut });
+    const isGlbSource = char.source.toLowerCase().endsWith('.glb');
+    if (force || needsRebuild(meshOut, char.source, meshScript)) {
+      if (isGlbSource) {
+        // GLB source already has T-pose rest + skin — just copy.
+        fs.copyFileSync(char.source, meshOut);
+        console.log(`[build:${char.id}] copied ${char.source} → ${meshOut}`);
+      } else {
+        runBlender('export_mesh.py', { MESH_FBX: char.source, MESH_OUT: meshOut });
+      }
+      if (char.preRotateXDeg || char.autoGround) {
+        console.log(
+          `[build:${char.id}] pre-rotating ${char.preRotateXDeg ?? 0}° X${char.autoGround ? ' + auto-ground' : ''}...`,
+        );
+        runBlender('rotate_glb.py', {
+          MESH_GLB: meshOut,
+          ROT_X_DEG: String(char.preRotateXDeg ?? 0),
+          AUTO_GROUND: char.autoGround ? '1' : '0',
+        });
+      }
+      if (char.injectBones?.length) {
+        console.log(`[build:${char.id}] injecting ${char.injectBones.length} extra bones...`);
+        runBlender('inject_bones.py', {
+          MESH_GLB: meshOut,
+          BONES_JSON: JSON.stringify(char.injectBones),
+        });
+      }
     } else {
       console.log(`[build:${char.id}] mesh up to date`);
     }

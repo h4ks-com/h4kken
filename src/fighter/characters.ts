@@ -7,6 +7,7 @@
 // display name, thumbnails, future character-select metadata).
 
 import type { AnimKey } from './animations';
+import type { JiggleBoneConfig } from './JiggleSim';
 
 interface CharacterMeta {
   /** Must match a build entry id → public/assets/models/<id>.glb */
@@ -19,6 +20,8 @@ interface CharacterMeta {
   thumbnail?: string;
   /** Animation cycle shown in the character selection screen */
   selectAnims?: readonly AnimKey[];
+  /** Spring-bone secondary motion configs. Only characters with dedicated jiggle bones in their GLB. */
+  jiggleBones?: readonly JiggleBoneConfig[];
 }
 
 export const CHARACTERS: Record<string, CharacterMeta> = {
@@ -32,6 +35,15 @@ export const CHARACTERS: Record<string, CharacterMeta> = {
     name: 'Mita',
     scale: 0.85,
     selectAnims: ['introSpellIdle', 'victoryYes'],
+    jiggleBones: [
+      { name: 'Breast_Jiggle_L', stiffness: 0.3, drag: 0.3, gravityPower: 0.0005 },
+      { name: 'Breast_Jiggle_R', stiffness: 0.3, drag: 0.3, gravityPower: 0.0005 },
+    ],
+  },
+  handyc: {
+    id: 'handyc',
+    name: 'Handyc',
+    scale: 0.0085,
   },
 };
 
