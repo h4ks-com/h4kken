@@ -1,4 +1,11 @@
-import { type Bone, Quaternion, type Skeleton, type TransformNode, Vector3 } from '@babylonjs/core';
+import {
+  type Bone,
+  Quaternion,
+  type Skeleton,
+  Space,
+  type TransformNode,
+  Vector3,
+} from '@babylonjs/core';
 
 export interface JiggleBoneConfig {
   /** Bone name as exported from Blender/GLB (exact match or suffix after `-`). */
@@ -13,12 +20,12 @@ export interface JiggleBoneConfig {
 
 interface BoneState {
   bone: Bone;
-  /** Linked TransformNode — Babylon GLB loader links bones to TNs for skinning.
-   * Writing rotationQuaternion here drives mesh deformation. Bone.rotationQuaternion
-   * directly is NOT read by skinning when a linked TN exists. */
-  tn: TransformNode;
-  /** Parent bone's linked TN — used for parent world rotation in same frame. */
-  parentTN: TransformNode;
+  parent: Bone;
+  /** Linked TransformNode if present (GLB-loaded direct skeleton). When the
+   * skeleton was CLONED (game's Fighter does this), TN linkage is lost and
+   * we write to bone.rotationQuaternion directly instead. */
+  tn: TransformNode | null;
+  parentTN: TransformNode | null;
   /** Bone bind/rest local rotation (in parent space). */
   initialLocalRot: Quaternion;
   /** Bone +Y axis at rest, in parent-local space. */
@@ -105,37 +112,40 @@ export class JiggleSim {
         console.warn(`[JiggleSim] Bone "${cfg.name}" has no parent`);
         continue;
       }
+      // Try linked TN (GLB-loaded direct skeletons). Cloned skeletons (game
+      // path) have no linkage — fall back to writing the bone directly.
       const tn = bone.getTransformNode();
       const parentTN = parent.getTransformNode();
-      if (!tn || !parentTN) {
-        console.warn(
-          `[JiggleSim] Bone "${cfg.name}" or parent missing linked TN — skinning won't update`,
-        );
-        continue;
-      }
 
-      // Authoritative rest local rotation: prefer linked TN's existing
-      // rotationQuaternion (what skinning reads). Fall back to decomposing
-      // bone matrix if TN doesn't have a quaternion set yet.
-      if (!tn.rotationQuaternion) {
-        const q = new Quaternion();
-        bone.getLocalMatrix().decompose(undefined, q, undefined);
-        tn.rotationQuaternion = q;
+      // Authoritative rest local rotation. Prefer linked TN's rotationQuaternion
+      // when present (what skinning reads in GLB-direct path), else read from
+      // the bone itself (cloned-skeleton path — Babylon updates skinning from
+      // bone's own _localMatrix which is composed from rotationQuaternion).
+      const initialLocalRot = new Quaternion();
+      if (tn?.rotationQuaternion) {
+        initialLocalRot.copyFrom(tn.rotationQuaternion);
+      } else {
+        bone.getLocalMatrix().decompose(undefined, initialLocalRot, undefined);
+        if (tn && !tn.rotationQuaternion) tn.rotationQuaternion = initialLocalRot.clone();
+        if (!bone.rotationQuaternion) bone.rotationQuaternion = initialLocalRot.clone();
       }
-      const initialLocalRot = tn.rotationQuaternion.clone();
 
       const restDirLocal = new Vector3();
       rotateVectorByQuat(initialLocalRot, BONE_AXIS, restDirLocal);
       restDirLocal.normalize();
 
-      const boneLength = Math.max(tn.position.length(), 0.05);
+      // Bone length from local position (head offset from parent).
+      const localPos = tn?.position ?? bone.position;
+      const boneLength = Math.max(localPos.length(), 0.05);
 
       // Initial world tail position.
-      parentTN.computeWorldMatrix(true);
-      tn.computeWorldMatrix(true);
-      const head = tn.getAbsolutePosition().clone();
+      parentTN?.computeWorldMatrix(true);
+      tn?.computeWorldMatrix(true);
+      const head = (tn?.getAbsolutePosition() ?? bone.getAbsolutePosition()).clone();
       const parentRot = new Quaternion();
-      parentTN.getWorldMatrix().decompose(undefined, parentRot, undefined);
+      const parentMat = parentTN?.getWorldMatrix() ?? parent.getWorldMatrix();
+      parentMat.decompose(undefined, parentRot, undefined);
+
       const restDirWorld = new Vector3();
       rotateVectorByQuat(parentRot, restDirLocal, restDirWorld);
       restDirWorld.normalize();
@@ -143,6 +153,7 @@ export class JiggleSim {
 
       this._bones.push({
         bone,
+        parent,
         tn,
         parentTN,
         initialLocalRot,
@@ -185,27 +196,41 @@ export class JiggleSim {
   }
 
   private _resetBone(s: BoneState): void {
-    s.parentTN.computeWorldMatrix(true);
-    s.tn.computeWorldMatrix(true);
-    const head = s.tn.getAbsolutePosition();
+    s.parentTN?.computeWorldMatrix(true);
+    s.tn?.computeWorldMatrix(true);
+    const head = s.tn?.getAbsolutePosition() ?? s.bone.getAbsolutePosition();
     const parentRot = new Quaternion();
-    s.parentTN.getWorldMatrix().decompose(undefined, parentRot, undefined);
+    const parentMat = s.parentTN?.getWorldMatrix() ?? s.parent.getWorldMatrix();
+    parentMat.decompose(undefined, parentRot, undefined);
     const dir = new Vector3();
     rotateVectorByQuat(parentRot, s.restDirLocal, dir);
     dir.normalize();
     const tail = head.add(dir.scale(s.boneLength));
     s.prevTailWorld.copyFrom(tail);
     s.currentTailWorld.copyFrom(tail);
-    if (s.tn.rotationQuaternion) s.tn.rotationQuaternion.copyFrom(s.initialLocalRot);
+    this._writeRotation(s, s.initialLocalRot);
+  }
+
+  /** Write a local rotation to bone — to linked TN if present, else direct
+   * to the bone via Babylon's official API (cloned-skeleton path). */
+  private _writeRotation(s: BoneState, q: Quaternion): void {
+    if (s.tn?.rotationQuaternion) {
+      s.tn.rotationQuaternion.copyFrom(q);
+    } else {
+      // Babylon's setRotationQuaternion handles matrix invalidation for both
+      // direct bones and bones inside a cloned skeleton.
+      s.bone.setRotationQuaternion(q, Space.LOCAL);
+    }
   }
 
   private _step(s: BoneState): void {
-    s.parentTN.computeWorldMatrix(true);
-    s.tn.computeWorldMatrix(true);
+    s.parentTN?.computeWorldMatrix(true);
+    s.tn?.computeWorldMatrix(true);
 
-    const head = s.tn.getAbsolutePosition();
+    const head = s.tn?.getAbsolutePosition() ?? s.bone.getAbsolutePosition();
     const parentRot = new Quaternion();
-    s.parentTN.getWorldMatrix().decompose(undefined, parentRot, undefined);
+    const parentMat = s.parentTN?.getWorldMatrix() ?? s.parent.getWorldMatrix();
+    parentMat.decompose(undefined, parentRot, undefined);
 
     // Rest tail position in world (where bone tail should be at rigid follow).
     const restDirWorld = new Vector3();
@@ -232,8 +257,6 @@ export class JiggleSim {
     s.prevTailWorld.copyFrom(s.currentTailWorld);
     s.currentTailWorld.copyFrom(next);
 
-    if (!s.tn.rotationQuaternion) return;
-
     // Compute bone's new local rotation: map BONE_AXIS to actual tail direction
     // in parent-local space, preserving rest twist around the bone axis.
     const toTail = next.subtract(head);
@@ -250,6 +273,7 @@ export class JiggleSim {
     const swingRest = new Quaternion();
     rotationBetweenUnitVectors(BONE_AXIS, s.restDirLocal, swingRest);
     const twistRest = Quaternion.Inverse(swingRest).multiply(s.initialLocalRot);
-    swing.multiplyToRef(twistRest, s.tn.rotationQuaternion);
+    const finalRot = swing.multiply(twistRest);
+    this._writeRotation(s, finalRot);
   }
 }
