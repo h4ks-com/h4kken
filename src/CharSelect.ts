@@ -5,10 +5,6 @@
 import {
   type AbstractMesh,
   type AnimationGroup,
-<<<<<<< HEAD
-=======
-  type Bone,
->>>>>>> upstream/main
   type FreeCamera,
   Quaternion,
   type Scene,
@@ -29,11 +25,6 @@ const CYCLE_ANIMS: readonly AnimKey[] = ['victorySmug', 'introTalking'];
 const CYCLE_INTERVAL_MS = 4000;
 const FLOURISH_ANIM: AnimKey = 'victoryCelebrate';
 const FLOURISH_DURATION_MS = 2000;
-
-function boneSuffix(name: string): string {
-  const idx = name.indexOf('-');
-  return idx >= 0 ? name.substring(idx + 1) : name;
-}
 
 class SelectSlot {
   private positionNode: TransformNode;
@@ -64,27 +55,14 @@ class SelectSlot {
     this.cycleAnims = cycleAnims ?? CYCLE_ANIMS;
     this.positionNode.scaling.setAll(assets.scale ?? 1.0);
 
-<<<<<<< HEAD
     const clonedSkeleton = cloneAndPrepareSkeleton(
       assets.baseSkeleton,
-=======
-    const clonedSkeleton = assets.baseSkeleton?.clone(
->>>>>>> upstream/main
       `cs_skeleton_${this.xOffset}`,
       `cs_skel_${this.xOffset}`,
     );
     this.currentSkeleton = clonedSkeleton ?? null;
 
-<<<<<<< HEAD
     const boneByName = buildBoneMap(clonedSkeleton);
-=======
-    const boneByName = new Map<string, Bone>();
-    if (clonedSkeleton) {
-      for (const bone of clonedSkeleton.bones) {
-        boneByName.set(boneSuffix(bone.name), bone);
-      }
-    }
->>>>>>> upstream/main
 
     for (const baseMesh of assets.baseMeshes) {
       const clone = baseMesh.clone(`cs_${this.xOffset}_${baseMesh.name}`, this.positionNode);
@@ -95,19 +73,9 @@ class SelectSlot {
     }
 
     for (const [name, srcGroup] of Object.entries(assets.animGroups)) {
-<<<<<<< HEAD
       const clonedGroup = srcGroup.clone(`cs_${this.xOffset}_${name}`, (target) =>
         remapAnimationTarget(target, boneByName),
       );
-=======
-      const clonedGroup = srcGroup.clone(`cs_${this.xOffset}_${name}`, (target) => {
-        if (target && typeof target === 'object' && 'name' in target) {
-          const mapped = boneByName.get(boneSuffix((target as { name: string }).name));
-          if (mapped) return mapped;
-        }
-        return target;
-      });
->>>>>>> upstream/main
       clonedGroup.stop();
       this.currentAnimGroups[name] = clonedGroup;
     }
