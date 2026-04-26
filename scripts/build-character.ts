@@ -267,7 +267,6 @@ async function main(): Promise<void> {
     const meshScript = path.join(SCRIPTS, 'export_mesh.py');
     const rotateScript = path.join(SCRIPTS, 'rotate_glb.py');
     const injectScript = path.join(SCRIPTS, 'inject_bones.py');
-    const isGlbSource = char.source.toLowerCase().endsWith('.glb');
     // Include all pipeline scripts that touch the mesh as rebuild triggers so
     // changes to rotate_glb.py, inject_bones.py, or characters.ts config
     // (preRotateXDeg, autoGround, injectBones) cause a fresh mesh build.
@@ -278,13 +277,11 @@ async function main(): Promise<void> {
       ...(char.injectBones?.length ? [injectScript] : []),
     ];
     if (force || needsRebuild(meshOut, ...meshInputs)) {
-      if (isGlbSource) {
-        // GLB source already has T-pose rest + skin — just copy.
-        fs.copyFileSync(char.source, meshOut);
-        console.log(`[build:${char.id}] copied ${char.source} → ${meshOut}`);
-      } else {
-        runBlender('export_mesh.py', { MESH_FBX: char.source, MESH_OUT: meshOut });
-      }
+      // export_mesh.py bakes the T-pose into mesh verts and skeleton rest pose.
+      // This is required for both FBX and GLB sources — raw GLBs from Mixamo have
+      // an unbaked rest pose (armature scale=0.01, A-pose rest) that causes the
+      // retargeter to produce wrong deformations (character gigantic / lying flat).
+      runBlender('export_mesh.py', { MESH_FBX: char.source, MESH_OUT: meshOut });
       if (char.preRotateXDeg || char.autoGround) {
         console.log(
           `[build:${char.id}] pre-rotating ${char.preRotateXDeg ?? 0}° X${char.autoGround ? ' + auto-ground' : ''}...`,

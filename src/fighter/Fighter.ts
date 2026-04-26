@@ -65,6 +65,8 @@ export interface SharedAssets {
   scale?: number;
   /** Spring-bone configs for secondary motion (e.g. breast jiggle). Set from CharacterMeta. */
   jiggleBones?: readonly JiggleBoneConfig[];
+  /** If true, meshes with emissive material should be registered with the scene GlowLayer. */
+  glowEmissive?: boolean;
 }
 
 const GC = GAME_CONSTANTS;
@@ -294,6 +296,20 @@ export class Fighter {
       if (m.material instanceof PBRMaterial) {
         m.material.directIntensity = 2.5;
         m.material.environmentIntensity = 0;
+        // Boost emissive strength so GlowLayer has enough signal to work with.
+        // GLB bakes Blender emissive strength into emissiveFactor which is often very small.
+        // Clamp to 1 per channel to preserve the hue rather than blowing out to white.
+        if (
+          m.material.emissiveColor.r > 0 ||
+          m.material.emissiveColor.g > 0 ||
+          m.material.emissiveColor.b > 0
+        ) {
+          const e = m.material.emissiveColor;
+          e.scaleToRef(20, e);
+          e.r = Math.min(e.r, 1);
+          e.g = Math.min(e.g, 1);
+          e.b = Math.min(e.b, 1);
+        }
       }
     }
 

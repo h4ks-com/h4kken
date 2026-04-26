@@ -139,4 +139,26 @@ export const CHARACTERS: CharacterSource[] = [
       Slide_Start:         -0.0326,
     },
   },
+  {
+    id: 'hanna',
+    source: path.join(ASSETS_SOURCE, 'hanna.glb'),
+    // Mixamo-rigged GLB, Y-up, feet already at Y=0.
+    // export_mesh.py bakes the T-pose rest, producing armature scale=1.0 like beano/mita.
+    // Computed via Blender FK analysis (scripts/compute_ground_corrections.py):
+    groundCorrections: {
+      Death01:              -0.2492,
+      Death02:              -0.1582,
+      LiftAir_Fall_Impact:  -0.2565,
+      GroundSit_Enter:      -0.2385,
+      GroundSit_Idle_Loop:  -0.2389,
+      GroundSit_Exit:       -0.2385,
+      Crouch_Idle_Loop:     -0.1122,
+      Crouch_Enter:         -0.1123,
+      Crouch_Exit:          -0.1123,
+      Crouch_Fwd_Loop:      -0.1261,
+      Crouch_Bwd_Loop:      -0.1713,
+      Fixing_Kneeling:      -0.1745,
+      Slide_Start:          -0.3087,
+    },
+  },
 ];

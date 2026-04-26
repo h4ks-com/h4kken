@@ -123,7 +123,7 @@ export class Stage {
       { diameter: 20, height: 0.08, tessellation: 32 },
       this.scene,
     );
-    fightArea.position.y = 0.01;
+    fightArea.position.y = -0.039;
     fightArea.receiveShadows = true;
     const faMat = new PBRMaterial('faMat', this.scene);
     faMat.albedoColor = new Color3(0.545, 0.451, 0.333);
@@ -137,7 +137,7 @@ export class Stage {
       { diameter: 20, thickness: 0.16, tessellation: 32 },
       this.scene,
     );
-    ring.position.y = 0.06;
+    ring.position.y = 0.001;
     const ringMat = new StandardMaterial('ringMat', this.scene);
     ringMat.diffuseColor = new Color3(1, 0.843, 0);
     ringMat.emissiveColor = new Color3(0.267, 0.2, 0);
@@ -150,7 +150,7 @@ export class Stage {
       { diameter: arenaRadius * 2, thickness: 0.24, tessellation: 32 },
       this.scene,
     );
-    outerRing.position.y = 0.02;
+    outerRing.position.y = -0.039;
     const outerRingMat = new StandardMaterial('outerRingMat', this.scene);
     outerRingMat.diffuseColor = new Color3(0.6, 0.467, 0.267);
     outerRing.material = outerRingMat;
@@ -178,7 +178,7 @@ export class Stage {
         { diameterTop: 0.9, diameterBottom: 1.1, height: 0.8, tessellation: 6 },
         this.scene,
       );
-      base.position.set(px, 0.1, pz);
+      base.position.set(px, 0.0, pz);
       const baseMat = new StandardMaterial(`pillarBaseMat${i}`, this.scene);
       baseMat.diffuseColor = new Color3(0.533, 0.467, 0.4);
       baseMat.specularColor = Color3.Black();

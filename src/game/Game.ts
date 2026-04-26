@@ -207,6 +207,7 @@ export class Game {
     this._pipeline.bloomKernel = 64;
     this._pipeline.bloomScale = 0.5;
 
+    // GlowLayer for per-character emissive glow (e.g. hanna's robot parts).
     // ACES tone mapping + slight contrast boost — kills the washed-out plastic look
     const imgProc = this.scene.imageProcessingConfiguration;
     imgProc.toneMappingEnabled = true;
@@ -286,6 +287,7 @@ export class Game {
       });
       assets.scale = meta.scale;
       assets.jiggleBones = meta.jiggleBones;
+      assets.glowEmissive = meta.glowEmissive;
       this.allCharAssets.set(meta.id, assets);
       loaded++;
     }
@@ -331,7 +333,8 @@ export class Game {
   reinitFighter(idx: 0 | 1, charId: string) {
     const assets = this.allCharAssets.get(charId) ?? this.allCharAssets.get(DEFAULT_P1);
     if (!assets) return;
-    this.fighters[idx]?.dispose();
+    const old = this.fighters[idx];
+    if (old) old.dispose();
     const fighter = new Fighter(idx, this.scene);
     fighter.init(assets);
     this.fighters[idx] = fighter;

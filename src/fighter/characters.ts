@@ -30,6 +30,8 @@ interface CharacterMeta {
   selectAnims?: readonly AnimKey[];
   /** Spring-bone secondary motion configs. Only characters with dedicated jiggle bones in their GLB. */
   jiggleBones?: readonly JiggleBoneConfig[];
+  /** If true, meshes with emissive material will be registered with the scene GlowLayer. */
+  glowEmissive?: boolean;
 }
 
 export const CHARACTERS: Record<string, CharacterMeta> = {
@@ -73,7 +75,15 @@ export const CHARACTERS: Record<string, CharacterMeta> = {
   handyc: {
     id: 'handyc',
     name: 'Handyc',
+    // GLB has armature scale=0.01; scale=0.85 gives ~85% of beano's height (intentionally small).
     scale: 0.0085,
+  },
+  hanna: {
+    id: 'hanna',
+    name: 'Hanna',
+    // export_mesh.py bakes the rest pose → armature scale=1.0, same as beano/mita.
+    scale: 1.7,
+    glowEmissive: true,
   },
 };
 

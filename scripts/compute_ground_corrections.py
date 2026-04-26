@@ -22,6 +22,7 @@ CHARS = [
     os.path.join(os.path.dirname(__file__), '..', 'public', 'assets', 'models', 'beano.glb'),
     os.path.join(os.path.dirname(__file__), '..', 'public', 'assets', 'models', 'mita.glb'),
     os.path.join(os.path.dirname(__file__), '..', 'public', 'assets', 'models', 'handyc.glb'),
+    os.path.join(os.path.dirname(__file__), '..', 'public', 'assets', 'models', 'hanna.glb'),
 ]
 
 # Strategy: 'last' = use last frame, 'min' = use minimum across all frames
