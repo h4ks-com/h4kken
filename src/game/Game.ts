@@ -423,12 +423,19 @@ export class Game {
       console.log(`[SYNC] Rollback netcode active (RTT=${this.network.rtt}ms)`);
       // Create network overlay for online matches (F3 to toggle)
       this._netOverlay?.dispose();
-      this._netOverlay = new NetworkOverlay(this.network);
+      this._netOverlay = new NetworkOverlay(this.network, 'online', {
+        scene: this.scene,
+        canvas: this.canvas,
+        gameCamera: this.camera,
+      });
     } else {
       this.rollbackManager = null;
-      // F3 overlay available in practice mode too (FPS/frame display)
       this._netOverlay?.dispose();
-      this._netOverlay = new NetworkOverlay(null, 'practice');
+      this._netOverlay = new NetworkOverlay(null, 'practice', {
+        scene: this.scene,
+        canvas: this.canvas,
+        gameCamera: this.camera,
+      });
       this._createPracticeMenu();
     }
     this._diag = makeDiag();
@@ -1305,7 +1312,7 @@ export class Game {
         if (f2) f2.updateJiggle(deltaTime * 1000);
       }
 
-      if (f1 && f2) {
+      if (f1 && f2 && !this._netOverlay?.freeCamActive) {
         this.fightCamera.update(f1.position, f2.position, deltaTime, this.localPlayerIndex);
       }
     }

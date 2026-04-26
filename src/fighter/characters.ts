@@ -9,6 +9,14 @@
 import type { AnimKey } from './animations';
 import type { JiggleBoneConfig } from './JiggleSim';
 
+/** Emit a symmetric L/R pair from a single config — `{S}` in the bone name
+ * template is replaced with `L` then `R`. Avoids duplicating identical sim
+ * params across both sides. */
+const sym = (nameTemplate: string, cfg: Omit<JiggleBoneConfig, 'name'>): JiggleBoneConfig[] => [
+  { ...cfg, name: nameTemplate.replace('{S}', 'L') },
+  { ...cfg, name: nameTemplate.replace('{S}', 'R') },
+];
+
 interface CharacterMeta {
   /** Must match a build entry id → public/assets/models/<id>.glb */
   id: string;
@@ -36,8 +44,30 @@ export const CHARACTERS: Record<string, CharacterMeta> = {
     scale: 0.85,
     selectAnims: ['introSpellIdle', 'victoryYes'],
     jiggleBones: [
-      { name: 'Breast_Jiggle_L', stiffness: 0.7, drag: 0.4, gravityPower: 0.0005 },
-      { name: 'Breast_Jiggle_R', stiffness: 0.7, drag: 0.4, gravityPower: 0.0005 },
+      ...sym('Breast_Jiggle_{S}', {
+        stiffness: 0.9,
+        drag: 0.3,
+        gravityPower: 0.01,
+        parentFollow: 0.5,
+      }),
+      ...sym('Hair_Jiggle_1.{S}', {
+        stiffness: 0.6,
+        drag: 0.5,
+        gravityPower: 0.005,
+        parentFollow: 0.7,
+      }),
+      ...sym('Hair_Jiggle_2.{S}', {
+        stiffness: 0.4,
+        drag: 0.3,
+        gravityPower: 0.005,
+        parentFollow: 0.7,
+      }),
+      ...sym('Hair_Jiggle_3.{S}', {
+        stiffness: 0.4,
+        drag: 0.3,
+        gravityPower: 0.005,
+        parentFollow: 0.7,
+      }),
     ],
   },
   handyc: {

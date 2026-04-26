@@ -16,6 +16,15 @@ export interface JiggleBoneConfig {
   drag?: number;
   /** Downward gravity per frame in WORLD -Y. Default 0.0005 */
   gravityPower?: number;
+  /**
+   * How much the bone's REST direction tracks its parent's rotation.
+   *   1.0 = fully follow parent (default Babylon skinning behaviour)
+   *   0.0 = locked to world direction recorded at init (T-pose)
+   *   0.5 = halfway — useful for Breast_Jiggle so it leans with chest but
+   *         not as much, keeping silhouette intact in combat stance.
+   * Default 1.0
+   */
+  parentFollow?: number;
 }
 
 interface BoneState {
@@ -34,6 +43,13 @@ interface BoneState {
   stiffness: number;
   drag: number;
   gravityPower: number;
+  parentFollow: number;
+  /** Parent's world rotation at init (T-pose). Used to compute the
+   * "delta" rotation parent has rotated since bind, which we then partially
+   * apply to the rest direction based on parentFollow. */
+  parentRotAtInit: Quaternion;
+  /** Fixed world direction recorded at bind/init time. */
+  restDirWorldFixed: Vector3;
   /** Tail position in WORLD space (verlet integrated). World frame is what
    * gives jiggle its inertia: when parent moves, world tail stays put briefly. */
   prevTailWorld: Vector3;
@@ -162,6 +178,9 @@ export class JiggleSim {
         stiffness: cfg.stiffness ?? 0.3,
         drag: cfg.drag ?? 0.3,
         gravityPower: cfg.gravityPower ?? 0.0005,
+        parentFollow: cfg.parentFollow ?? 1.0,
+        parentRotAtInit: parentRot.clone(),
+        restDirWorldFixed: restDirWorld.clone(),
         prevTailWorld: tailWorld.clone(),
         currentTailWorld: tailWorld.clone(),
       });
@@ -195,6 +214,21 @@ export class JiggleSim {
     // No allocated GPU resources to release.
   }
 
+  /** Compute the rest direction in world space, blended between fully-following
+   * parent (parentFollow=1) and fully-fixed-at-bind (parentFollow=0). */
+  private _computeRestDirWorld(s: BoneState, parentRot: Quaternion, out: Vector3): void {
+    if (s.parentFollow >= 0.999) {
+      rotateVectorByQuat(parentRot, s.restDirLocal, out);
+    } else if (s.parentFollow <= 0.001) {
+      out.copyFrom(s.restDirWorldFixed);
+    } else {
+      const delta = parentRot.multiply(Quaternion.Inverse(s.parentRotAtInit));
+      const partial = Quaternion.Slerp(Quaternion.Identity(), delta, s.parentFollow);
+      rotateVectorByQuat(partial, s.restDirWorldFixed, out);
+    }
+    out.normalize();
+  }
+
   private _resetBone(s: BoneState): void {
     s.parentTN?.computeWorldMatrix(true);
     s.tn?.computeWorldMatrix(true);
@@ -203,12 +237,26 @@ export class JiggleSim {
     const parentMat = s.parentTN?.getWorldMatrix() ?? s.parent.getWorldMatrix();
     parentMat.decompose(undefined, parentRot, undefined);
     const dir = new Vector3();
-    rotateVectorByQuat(parentRot, s.restDirLocal, dir);
-    dir.normalize();
+    this._computeRestDirWorld(s, parentRot, dir);
     const tail = head.add(dir.scale(s.boneLength));
     s.prevTailWorld.copyFrom(tail);
     s.currentTailWorld.copyFrom(tail);
-    this._writeRotation(s, s.initialLocalRot);
+    this._writeRotationForWorldDir(s, parentRot, dir);
+  }
+
+  /** Set bone's local rotation so its world Y-axis points along `dirWorld`,
+   * preserving rest twist. */
+  private _writeRotationForWorldDir(s: BoneState, parentRot: Quaternion, dirWorld: Vector3): void {
+    const parentInv = Quaternion.Inverse(parentRot);
+    const dirLocal = new Vector3();
+    rotateVectorByQuat(parentInv, dirWorld, dirLocal);
+    dirLocal.normalize();
+    const swing = new Quaternion();
+    rotationBetweenUnitVectors(BONE_AXIS, dirLocal, swing);
+    const swingRest = new Quaternion();
+    rotationBetweenUnitVectors(BONE_AXIS, s.restDirLocal, swingRest);
+    const twistRest = Quaternion.Inverse(swingRest).multiply(s.initialLocalRot);
+    this._writeRotation(s, swing.multiply(twistRest));
   }
 
   /** Write a local rotation to bone — to linked TN if present, else direct
@@ -232,10 +280,8 @@ export class JiggleSim {
     const parentMat = s.parentTN?.getWorldMatrix() ?? s.parent.getWorldMatrix();
     parentMat.decompose(undefined, parentRot, undefined);
 
-    // Rest tail position in world (where bone tail should be at rigid follow).
     const restDirWorld = new Vector3();
-    rotateVectorByQuat(parentRot, s.restDirLocal, restDirWorld);
-    restDirWorld.normalize();
+    this._computeRestDirWorld(s, parentRot, restDirWorld);
     const restTailWorld = head.add(restDirWorld.scale(s.boneLength));
 
     // Mass-spring-damper integration step (mass=1, dt=1).

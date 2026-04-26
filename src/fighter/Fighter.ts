@@ -622,6 +622,7 @@ export class Fighter {
     this.runFrames = 0;
     this.landingTimer = 0;
     this.hitFlash = 0;
+    this._applyEmissiveFlash(false);
     if (this.superPowerActive || this._superWasActivatedThisRound) {
       this.superMeter = 0;
     }

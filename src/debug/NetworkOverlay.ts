@@ -16,29 +16,50 @@
 //   4. Rollback netcode stats (rollbacks, misprediction, stalls)
 // ============================================================
 
+import { ArcRotateCamera, type Camera, type Scene, Vector3 } from '@babylonjs/core';
 import type { RollbackManager } from '../game/RollbackManager';
 import type { Network } from '../Network';
 import type { WebRTCStats } from '../transport/WebRTCTransport';
 
 type OverlayMode = 'online' | 'practice';
 
+interface FreeCamHooks {
+  scene: Scene;
+  canvas: HTMLCanvasElement;
+  gameCamera: Camera;
+}
+
 export class NetworkOverlay {
   private _el: HTMLDivElement | null = null;
+  private _textEl: HTMLPreElement | null = null;
   private _visible = false;
   private _network: Network | null;
   private _keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
-  // FPS tracking (rolling average over last 60 frames)
   private _fpsSamples: number[] = [];
   private _lastFrameTime = 0;
 
-  // Cached WebRTC stats (polled at ~1s intervals, not every frame)
   private _stats: WebRTCStats | null = null;
 
-  constructor(network: Network | null, _mode: OverlayMode = 'online') {
+  private _freeCamHooks: FreeCamHooks | null;
+  private _freeCam: ArcRotateCamera | null = null;
+  private _freeCamActive = false;
+  private _savedAutoClear = false;
+  private _savedAutoClearDS = false;
+
+  constructor(
+    network: Network | null,
+    _mode: OverlayMode = 'online',
+    freeCamHooks: FreeCamHooks | null = null,
+  ) {
     this._network = network;
+    this._freeCamHooks = freeCamHooks;
     this._createDOM();
     this._bindToggle();
+  }
+
+  get freeCamActive(): boolean {
+    return this._freeCamActive;
   }
 
   private _createDOM(): void {
@@ -58,12 +79,71 @@ export class NetworkOverlay {
       'pointer-events: auto',
       'display: none',
       'line-height: 1.5',
-      'white-space: pre',
     ].join(';');
 
-    el.appendChild(document.createTextNode(''));
+    if (this._freeCamHooks) {
+      const row = document.createElement('label');
+      row.style.cssText =
+        'display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:pointer;user-select:none;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = 'free-cam-toggle';
+      cb.style.cssText = 'cursor:pointer;';
+      cb.addEventListener('change', () => this._setFreeCam(cb.checked));
+      const txt = document.createElement('span');
+      txt.textContent = 'Free Cam (orbit/zoom)';
+      row.appendChild(cb);
+      row.appendChild(txt);
+      el.appendChild(row);
+    }
+
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'margin:0;font-family:monospace;font-size:11px;white-space:pre;';
+    el.appendChild(pre);
+    this._textEl = pre;
+
     document.body.appendChild(el);
     this._el = el;
+  }
+
+  private _setFreeCam(enabled: boolean): void {
+    if (!this._freeCamHooks) return;
+    const { scene, canvas, gameCamera } = this._freeCamHooks;
+
+    if (enabled) {
+      if (!this._freeCam) {
+        const cam = new ArcRotateCamera(
+          'freeCam',
+          -Math.PI / 2,
+          Math.PI / 2.5,
+          12,
+          new Vector3(0, 1.2, 0),
+          scene,
+        );
+        cam.minZ = 0.1;
+        cam.maxZ = 200;
+        cam.wheelPrecision = 30;
+        cam.panningSensibility = 60;
+        cam.lowerRadiusLimit = 1.5;
+        cam.upperRadiusLimit = 60;
+        this._freeCam = cam;
+      }
+      this._freeCam.attachControl(canvas, true);
+      this._savedAutoClear = scene.autoClear;
+      this._savedAutoClearDS = scene.autoClearDepthAndStencil;
+      scene.autoClear = true;
+      scene.autoClearDepthAndStencil = true;
+      scene.activeCamera = this._freeCam;
+      this._freeCamActive = true;
+    } else {
+      if (this._freeCam) {
+        this._freeCam.detachControl();
+      }
+      scene.autoClear = this._savedAutoClear;
+      scene.autoClearDepthAndStencil = this._savedAutoClearDS;
+      scene.activeCamera = gameCamera;
+      this._freeCamActive = false;
+    }
   }
 
   private _bindToggle(): void {
@@ -94,11 +174,9 @@ export class NetworkOverlay {
 
     const fps = engineFps > 0 ? Math.round(engineFps) : this._avgFps();
 
-    // Practice mode: lightweight display (FPS + frame only)
     if (!this._network) {
-      const textNode = this._el.firstChild;
-      if (textNode && textNode.nodeType === Node.TEXT_NODE) {
-        textNode.textContent = `FPS: ${fps}  Frame: ${frame}\nMode: PRACTICE`;
+      if (this._textEl) {
+        this._textEl.textContent = `FPS: ${fps}  Frame: ${frame}\nMode: PRACTICE`;
       }
       this._el.style.color = '#0f0';
       return;
@@ -127,13 +205,9 @@ export class NetworkOverlay {
     lines += `\nAdvance: ${softAdv}f  Frame: ${frame}  Delay: ${inputDelay}f`;
     lines += this._rollbackLines(rm);
 
-    // Set text (first child is the text node)
-    const textNode = this._el.firstChild;
-    if (textNode && textNode.nodeType === Node.TEXT_NODE) {
-      textNode.textContent = lines;
+    if (this._textEl) {
+      this._textEl.textContent = lines;
     }
-
-    // Apply RTT color to the whole overlay
     this._el.style.color = rttColor;
   }
 
@@ -207,9 +281,22 @@ export class NetworkOverlay {
       document.removeEventListener('keydown', this._keyHandler);
       this._keyHandler = null;
     }
+    if (this._freeCam) {
+      if (this._freeCamActive && this._freeCamHooks) {
+        const { scene, gameCamera } = this._freeCamHooks;
+        scene.autoClear = this._savedAutoClear;
+        scene.autoClearDepthAndStencil = this._savedAutoClearDS;
+        scene.activeCamera = gameCamera;
+      }
+      this._freeCam.detachControl();
+      this._freeCam.dispose();
+      this._freeCam = null;
+      this._freeCamActive = false;
+    }
     if (this._el) {
       this._el.remove();
       this._el = null;
     }
+    this._textEl = null;
   }
 }
