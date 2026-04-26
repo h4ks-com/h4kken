@@ -57,18 +57,64 @@ export interface CharacterSource {
    * Useful for source GLBs with origin at center of mass instead of at feet.
    */
   autoGround?: boolean;
+  /**
+   * Per-clip ground corrections applied after retargeting.
+   *
+   * After retargeting UAL animations onto a Mixamo skeleton, proportional
+   * differences between rigs (UAL vs Mixamo bone lengths) cause the character
+   * to float above or sink below Y=0 during ground-contact poses (death, crouch,
+   * ground-sit). Each value is the amount to subtract from every Hips.position.y
+   * keyframe in that clip — positive = character was floating (shift down),
+   * negative = character was sinking (shift up).
+   *
+   * Computed per character via Blender FK analysis:
+   *   correction = min_world_Y_at_contact_frame - idle_floor_reference
+   *
+   * Only clips where abs(correction) > 5mm need entries.
+   */
+  groundCorrections?: Record<string, number>;
 }
 
 export const CHARACTERS: CharacterSource[] = [
   {
     id: 'beano',
     source: path.join(ASSETS_SOURCE, 'beano.fbx'),
+    // Computed via Blender FK analysis (scripts/compute_ground_corrections.py):
+    // correction = min_world_Y_at_contact_frame - idle_floor_reference
+    groundCorrections: {
+      Death01:              0.1803,
+      Death02:              0.2511,
+      LiftAir_Fall_Impact:  0.2105,
+      GroundSit_Enter:      0.2211,
+      GroundSit_Idle_Loop:  0.2211,
+      GroundSit_Exit:       0.2211,
+      Crouch_Idle_Loop:     0.0787,
+      Crouch_Enter:         0.0811,
+      Crouch_Exit:          0.0811,
+      Crouch_Fwd_Loop:      0.0517,
+      Crouch_Bwd_Loop:      0.0082,
+    },
   },
   {
     id: 'mita',
     source: path.join(ASSETS_SOURCE, 'mita.fbx'),
     // Jiggle bones + weights added manually in assets/source/mita.blend
     // (see Breast_Jiggle_L/R in armature). No auto-inject needed.
+    // Computed via Blender FK analysis (scripts/compute_ground_corrections.py):
+    groundCorrections: {
+      Death01:              0.1315,
+      Death02:             -0.5155,
+      GroundSit_Enter:      0.2075,
+      GroundSit_Idle_Loop:  0.2054,
+      GroundSit_Exit:       0.2075,
+      Crouch_Idle_Loop:     0.1285,
+      Crouch_Enter:         0.1371,
+      Crouch_Exit:          0.1372,
+      Crouch_Fwd_Loop:      0.0806,
+      Crouch_Bwd_Loop:      0.0569,
+      Fixing_Kneeling:     -0.2561,
+      Slide_Start:          0.0407,
+    },
   },
   {
     id: 'handyc',
@@ -77,5 +123,20 @@ export const CHARACTERS: CharacterSource[] = [
     preRotateXDeg: -90,
     // Origin at torso, not feet — lift so lowest vert sits at ground.
     autoGround: true,
+    // Computed via Blender FK analysis (scripts/compute_ground_corrections.py):
+    groundCorrections: {
+      Death01:              0.0660,
+      Death02:              0.1778,
+      LiftAir_Fall_Impact:  0.0701,
+      GroundSit_Enter:      0.0763,
+      GroundSit_Idle_Loop:  0.0763,
+      GroundSit_Exit:       0.0763,
+      Crouch_Idle_Loop:     0.0395,
+      Crouch_Enter:         0.0399,
+      Crouch_Exit:          0.0399,
+      Crouch_Fwd_Loop:      0.0385,
+      Crouch_Bwd_Loop:     -0.0058,
+      Slide_Start:         -0.0326,
+    },
   },
 ];

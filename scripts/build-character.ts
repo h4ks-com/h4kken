@@ -68,6 +68,47 @@ function glbToDataUrl(absPath: string): string {
   return `data:application/octet-stream;base64,${buf.toString('base64')}`;
 }
 
+/**
+ * Shifts every keyframe value of the `position` property on the Hips
+ * TransformNode in an AnimationGroup by `deltaY` on the Y axis.
+ *
+ * After UAL→Mixamo retargeting, proportional rig differences cause ground-
+ * contact poses (death, crouch, ground-sit) to float above or sink below Y=0.
+ * Subtracting the measured float amount uniformly from all Hips Y keyframes
+ * corrects this. The correction is imperceptible at the start of fall/death
+ * anims due to blending, and makes the end-pose land on the floor correctly.
+ *
+ * @param ag       The retargeted AnimationGroup.
+ * @param deltaY   Correction in world metres (as computed by Blender FK analysis).
+ *                 Converted to GLB keyframe units via the armature's world scale.
+ */
+function applyHipsYCorrection(
+  ag: ReturnType<AnimatorAvatar['retargetAnimationGroup']>,
+  deltaY: number,
+): void {
+  for (const ta of ag.targetedAnimations) {
+    const tgt = ta.target as TransformNode;
+    if (!tgt?.name?.includes('Hips')) continue;
+    if (ta.animation.targetProperty !== 'position') continue;
+
+    // Keyframe values are in the armature's local space. Walk up the TN parent
+    // chain to find the accumulated Y scale, then convert the metre correction
+    // to keyframe units (e.g. handyc's armature has scale=0.01 → divide by 0.01).
+    let scaleY = 1;
+    let node: TransformNode | null = tgt.parent as TransformNode | null;
+    while (node) {
+      scaleY *= node.scaling.y;
+      node = node.parent as TransformNode | null;
+    }
+    const deltaKeyframe = scaleY > 0 ? deltaY / scaleY : deltaY;
+
+    for (const key of ta.animation.getKeys()) {
+      (key.value as Vector3).y -= deltaKeyframe;
+    }
+    return;
+  }
+}
+
 async function retargetAndSerialize(char: CharacterSource): Promise<void> {
   const meshGlb = path.join(MODELS, `${char.id}_mesh.glb`);
   const ual1Glb = path.join(MODELS, 'ual1_anims.glb');
@@ -133,6 +174,13 @@ async function retargetAndSerialize(char: CharacterSource): Promise<void> {
       fixGroundReference: false,
     });
     out.stop();
+
+    const groundDelta = char.groundCorrections?.[clip];
+    if (groundDelta !== undefined && Math.abs(groundDelta) > 0.001) {
+      applyHipsYCorrection(out, groundDelta);
+      console.log(`[build:${char.id}] ground-corrected ${clip}: Hips Y ${groundDelta > 0 ? '-' : '+'}${Math.abs(groundDelta).toFixed(4)}m`);
+    }
+
     retargeted++;
   }
 
