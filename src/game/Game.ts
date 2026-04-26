@@ -207,6 +207,7 @@ export class Game {
     this._pipeline.bloomKernel = 64;
     this._pipeline.bloomScale = 0.5;
 
+    // GlowLayer for per-character emissive glow (e.g. hanna's robot parts).
     // ACES tone mapping + slight contrast boost — kills the washed-out plastic look
     const imgProc = this.scene.imageProcessingConfiguration;
     imgProc.toneMappingEnabled = true;
@@ -285,6 +286,8 @@ export class Game {
         this.ui.setLoadingProgress((loaded + p) / charEntries.length);
       });
       assets.scale = meta.scale;
+      assets.jiggleBones = meta.jiggleBones;
+      assets.glowEmissive = meta.glowEmissive;
       this.allCharAssets.set(meta.id, assets);
       loaded++;
     }
@@ -330,7 +333,8 @@ export class Game {
   reinitFighter(idx: 0 | 1, charId: string) {
     const assets = this.allCharAssets.get(charId) ?? this.allCharAssets.get(DEFAULT_P1);
     if (!assets) return;
-    this.fighters[idx]?.dispose();
+    const old = this.fighters[idx];
+    if (old) old.dispose();
     const fighter = new Fighter(idx, this.scene);
     fighter.init(assets);
     this.fighters[idx] = fighter;
@@ -422,12 +426,19 @@ export class Game {
       console.log(`[SYNC] Rollback netcode active (RTT=${this.network.rtt}ms)`);
       // Create network overlay for online matches (F3 to toggle)
       this._netOverlay?.dispose();
-      this._netOverlay = new NetworkOverlay(this.network);
+      this._netOverlay = new NetworkOverlay(this.network, 'online', {
+        scene: this.scene,
+        canvas: this.canvas,
+        gameCamera: this.camera,
+      });
     } else {
       this.rollbackManager = null;
-      // F3 overlay available in practice mode too (FPS/frame display)
       this._netOverlay?.dispose();
-      this._netOverlay = new NetworkOverlay(null, 'practice');
+      this._netOverlay = new NetworkOverlay(null, 'practice', {
+        scene: this.scene,
+        canvas: this.canvas,
+        gameCamera: this.camera,
+      });
       this._createPracticeMenu();
     }
     this._diag = makeDiag();
@@ -1300,9 +1311,11 @@ export class Game {
       } else {
         if (f1) f1.updateVisuals();
         if (f2) f2.updateVisuals();
+        if (f1) f1.updateJiggle(deltaTime * 1000);
+        if (f2) f2.updateJiggle(deltaTime * 1000);
       }
 
-      if (f1 && f2) {
+      if (f1 && f2 && !this._netOverlay?.freeCamActive) {
         this.fightCamera.update(f1.position, f2.position, deltaTime, this.localPlayerIndex);
       }
     }
