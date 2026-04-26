@@ -224,10 +224,12 @@ async function main(): Promise<void> {
   fs.mkdirSync(MODELS, { recursive: true });
   const force = process.argv.includes('--force');
   const forceUal = process.argv.includes('--force-ual');
-  const charArg = (() => {
-    const idx = process.argv.indexOf('--char');
-    return idx !== -1 ? process.argv[idx + 1] : null;
-  })();
+  const charArgIdx = process.argv.indexOf('--char');
+  if (charArgIdx !== -1 && !process.argv[charArgIdx + 1]) {
+    console.error('[build] --char requires a character id');
+    process.exit(1);
+  }
+  const charArg = charArgIdx !== -1 ? process.argv[charArgIdx + 1] : null;
 
   if (charArg && !CHARACTERS.find((c) => c.id === charArg)) {
     console.error(`[build] unknown character: "${charArg}". Valid ids: ${CHARACTERS.map((c) => c.id).join(', ')}`);
@@ -263,8 +265,19 @@ async function main(): Promise<void> {
   for (const char of chars) {
     const meshOut = path.join(MODELS, `${char.id}_mesh.glb`);
     const meshScript = path.join(SCRIPTS, 'export_mesh.py');
+    const rotateScript = path.join(SCRIPTS, 'rotate_glb.py');
+    const injectScript = path.join(SCRIPTS, 'inject_bones.py');
     const isGlbSource = char.source.toLowerCase().endsWith('.glb');
-    if (force || needsRebuild(meshOut, char.source, meshScript)) {
+    // Include all pipeline scripts that touch the mesh as rebuild triggers so
+    // changes to rotate_glb.py, inject_bones.py, or characters.ts config
+    // (preRotateXDeg, autoGround, injectBones) cause a fresh mesh build.
+    const meshInputs = [
+      char.source,
+      meshScript,
+      ...(char.preRotateXDeg || char.autoGround ? [rotateScript] : []),
+      ...(char.injectBones?.length ? [injectScript] : []),
+    ];
+    if (force || needsRebuild(meshOut, ...meshInputs)) {
       if (isGlbSource) {
         // GLB source already has T-pose rest + skin — just copy.
         fs.copyFileSync(char.source, meshOut);

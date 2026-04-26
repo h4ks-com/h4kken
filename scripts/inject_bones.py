@@ -51,9 +51,9 @@ for o in list(bpy.data.objects):
         bpy.data.objects.remove(o, do_unlink=True)
 
 armature = next((o for o in bpy.data.objects if o.type == 'ARMATURE'), None)
-mesh_obj = next((o for o in bpy.data.objects if o.type == 'MESH' and o.parent is not None), None)
+mesh_objs = [o for o in bpy.data.objects if o.type == 'MESH' and o.parent is not None]
 
-if not armature or not mesh_obj:
+if not armature or not mesh_objs:
     print('ERROR: could not find armature or skinned mesh')
     sys.exit(1)
 
@@ -94,7 +94,7 @@ def smoothstep(t: float) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
-def paint_bone_weights(spec):
+def paint_bone_weights(spec, mesh_obj):
     name = spec['name']
     radius = spec.get('weightRadius')
     if radius is None or radius <= 0:
@@ -103,6 +103,10 @@ def paint_bone_weights(spec):
     # Inner plateau where weight is exactly 1.0 (no contest). Between inner and
     # outer, smoothstep falloff. Beyond outer, 0.
     plateau = spec.get('weightPlateau', radius * 0.4)
+
+    if plateau >= radius:
+        print(f'  ERROR: weightPlateau ({plateau}) >= weightRadius ({radius}) for bone {name} — skipping weights')
+        return
 
     vg = mesh_obj.vertex_groups.get(name) or mesh_obj.vertex_groups.new(name=name)
     vg_index = vg.index
@@ -148,7 +152,8 @@ def paint_bone_weights(spec):
 
 
 for spec in added:
-    paint_bone_weights(spec)
+    for mesh_obj in mesh_objs:
+        paint_bone_weights(spec, mesh_obj)
 
 # 3. Export.
 for o in bpy.data.objects:
@@ -156,7 +161,8 @@ for o in bpy.data.objects:
         o.select_set(False)
     except RuntimeError:
         pass
-mesh_obj.select_set(True)
+for mesh_obj in mesh_objs:
+    mesh_obj.select_set(True)
 armature.select_set(True)
 bpy.context.view_layer.objects.active = armature
 

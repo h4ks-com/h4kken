@@ -65,14 +65,14 @@ if AUTO_GROUND:
 
 # Re-export.
 arm = next((o for o in bpy.data.objects if o.type == 'ARMATURE'), None)
-mesh = next((o for o in bpy.data.objects if o.type == 'MESH' and o.parent), None)
+meshes = [o for o in bpy.data.objects if o.type == 'MESH' and o.parent]
 
 bpy.ops.object.select_all(action='DESELECT')
 if arm:
     arm.select_set(True)
-if mesh:
+for mesh in meshes:
     mesh.select_set(True)
-bpy.context.view_layer.objects.active = arm or mesh
+bpy.context.view_layer.objects.active = arm or (meshes[0] if meshes else None)
 
 bpy.ops.export_scene.gltf(
     filepath=GLB,

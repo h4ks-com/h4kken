@@ -199,7 +199,7 @@ export class JiggleSim {
       this._frameCount++;
       return;
     }
-    for (const s of this._bones) this._step(s);
+    for (const s of this._bones) this._step(s, deltaTimeMs / 16.667);
     this._frameCount++;
   }
 
@@ -271,7 +271,7 @@ export class JiggleSim {
     }
   }
 
-  private _step(s: BoneState): void {
+  private _step(s: BoneState, dt: number): void {
     s.parentTN?.computeWorldMatrix(true);
     s.tn?.computeWorldMatrix(true);
 
@@ -284,12 +284,13 @@ export class JiggleSim {
     this._computeRestDirWorld(s, parentRot, restDirWorld);
     const restTailWorld = head.add(restDirWorld.scale(s.boneLength));
 
-    // Mass-spring-damper integration step (mass=1, dt=1).
+    // Mass-spring-damper integration step (mass=1). dt is normalised to
+    // 60 fps units (1.0 = one 60 fps frame) so coefficients are frame-rate independent.
     const velocity = s.currentTailWorld.subtract(s.prevTailWorld);
-    const springForce = restTailWorld.subtract(s.currentTailWorld).scale(s.stiffness);
-    const dampingForce = velocity.scale(-s.drag);
+    const springForce = restTailWorld.subtract(s.currentTailWorld).scale(s.stiffness * dt);
+    const dampingForce = velocity.scale(-s.drag * dt);
     const accel = springForce.add(dampingForce);
-    accel.y -= s.gravityPower;
+    accel.y -= s.gravityPower * dt;
     const newVel = velocity.add(accel);
     const next = s.currentTailWorld.add(newVel);
 

@@ -639,6 +639,7 @@ export class Fighter {
     }
 
     this.playAnimation('combatIdle');
+    this._jiggleSim?.reset();
   }
 
   snapshotSim(): FighterSnapshot {

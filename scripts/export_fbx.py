@@ -17,7 +17,11 @@ def main() -> None:
     if '--' not in argv:
         print('ERROR: missing -- <output.fbx>')
         sys.exit(1)
-    out = argv[argv.index('--') + 1]
+    idx = argv.index('--')
+    if idx + 1 >= len(argv):
+        print('ERROR: missing <output.fbx> argument after --')
+        sys.exit(1)
+    out = argv[idx + 1]
     out = os.path.abspath(out)
 
     if bpy.context.mode != 'OBJECT':
@@ -39,6 +43,11 @@ def main() -> None:
 
     if arm is None:
         print('ERROR: no ARMATURE in scene')
+        sys.exit(1)
+
+    mesh_count = sum(1 for o in bpy.data.objects if o.type == 'MESH' and o.select_get())
+    if mesh_count == 0:
+        print('ERROR: no MESH objects in scene — nothing to export')
         sys.exit(1)
 
     bpy.context.view_layer.objects.active = arm

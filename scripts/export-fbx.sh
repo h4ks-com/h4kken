@@ -22,6 +22,7 @@ if [[ ! -f "$INPUT" ]]; then
 fi
 
 INPUT_ABS="$(cd "$(dirname "$INPUT")" && pwd)/$(basename "$INPUT")"
+mkdir -p "$(dirname "$OUTPUT")"
 OUTPUT_DIR="$(cd "$(dirname "$OUTPUT")" && pwd)"
 OUTPUT_ABS="$OUTPUT_DIR/$(basename "$OUTPUT")"
 
