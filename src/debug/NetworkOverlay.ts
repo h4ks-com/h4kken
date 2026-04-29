@@ -27,6 +27,8 @@ interface FreeCamHooks {
   scene: Scene;
   canvas: HTMLCanvasElement;
   gameCamera: Camera;
+  /** Optional toggle for jiggle bone + collider debug visualization. */
+  setDebugBones?: (enabled: boolean) => void;
 }
 
 export class NetworkOverlay {
@@ -95,6 +97,21 @@ export class NetworkOverlay {
       row.appendChild(cb);
       row.appendChild(txt);
       el.appendChild(row);
+
+      if (this._freeCamHooks.setDebugBones) {
+        const r2 = document.createElement('label');
+        r2.style.cssText =
+          'display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:pointer;user-select:none;';
+        const cb2 = document.createElement('input');
+        cb2.type = 'checkbox';
+        cb2.style.cssText = 'cursor:pointer;';
+        cb2.addEventListener('change', () => this._freeCamHooks?.setDebugBones?.(cb2.checked));
+        const t2 = document.createElement('span');
+        t2.textContent = 'Debug Bones + Colliders';
+        r2.appendChild(cb2);
+        r2.appendChild(t2);
+        el.appendChild(r2);
+      }
     }
 
     const pre = document.createElement('pre');

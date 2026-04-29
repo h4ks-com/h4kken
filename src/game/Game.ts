@@ -25,6 +25,7 @@ import { FightCamera } from '../Camera';
 import { CharSelect } from '../CharSelect';
 import { CombatSystem } from '../combat/CombatSystem';
 import { GAME_CONSTANTS } from '../constants';
+import { JiggleDebug } from '../debug/JiggleDebug';
 import { NetworkOverlay } from '../debug/NetworkOverlay';
 import { CHARACTERS, DEFAULT_P1, DEFAULT_P2 } from '../fighter/characters';
 import { Fighter, type SharedAssets } from '../fighter/Fighter';
@@ -106,6 +107,7 @@ export class Game {
   private _pipeline: DefaultRenderingPipeline | null = null;
   private botAI = new BotAI();
   _netOverlay: NetworkOverlay | null = null;
+  private _jiggleDebug: JiggleDebug | null = null;
   // Practice pause menu (ESC toggled)
   private _practiceMenuEl: HTMLDivElement | null = null;
   private _practicePaused = false;
@@ -286,7 +288,7 @@ export class Game {
         this.ui.setLoadingProgress((loaded + p) / charEntries.length);
       });
       assets.scale = meta.scale;
-      assets.jiggleBones = meta.jiggleBones;
+      assets.jiggle = meta.jiggle;
       assets.glowEmissive = meta.glowEmissive;
       this.allCharAssets.set(meta.id, assets);
       loaded++;
@@ -430,6 +432,7 @@ export class Game {
         scene: this.scene,
         canvas: this.canvas,
         gameCamera: this.camera,
+        setDebugBones: (on) => this._setJiggleDebug(on),
       });
     } else {
       this.rollbackManager = null;
@@ -438,6 +441,7 @@ export class Game {
         scene: this.scene,
         canvas: this.canvas,
         gameCamera: this.camera,
+        setDebugBones: (on) => this._setJiggleDebug(on),
       });
       this._createPracticeMenu();
     }
@@ -1330,6 +1334,14 @@ export class Game {
       this._inputDelayFrames,
       this.engine.getFps(),
     );
+    this._jiggleDebug?.update();
+  }
+
+  private _setJiggleDebug(on: boolean): void {
+    if (on && !this._jiggleDebug) {
+      this._jiggleDebug = new JiggleDebug(this.scene, () => this.fighters);
+    }
+    this._jiggleDebug?.setEnabled(on);
   }
 
   private _onResize() {

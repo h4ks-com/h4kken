@@ -161,4 +161,23 @@ export const CHARACTERS: CharacterSource[] = [
       Slide_Start:          -0.3087,
     },
   },
+  {
+    id: 'valware',
+    source: path.join(ASSETS_SOURCE, 'valware.glb'),
+    groundCorrections: {
+      Death01:              -0.3005,
+      Death02:              -0.1866,
+      LiftAir_Fall_Impact:  -0.3086,
+      GroundSit_Enter:      -0.3590,
+      GroundSit_Idle_Loop:  -0.3590,
+      GroundSit_Exit:       -0.3590,
+      Crouch_Idle_Loop:     -0.1855,
+      Crouch_Enter:         -0.1855,
+      Crouch_Exit:          -0.1855,
+      Crouch_Fwd_Loop:      -0.1855,
+      Crouch_Bwd_Loop:      -0.2092,
+      Fixing_Kneeling:      -0.2264,
+      Slide_Start:          -0.3926,
+    },
+  },
 ];

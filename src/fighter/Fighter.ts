@@ -55,7 +55,7 @@ import {
   handleStandingState,
   handleStunState,
 } from './FighterStateHandlers';
-import { type JiggleBoneConfig, JiggleSim } from './JiggleSim';
+import { type JiggleConfig, JiggleSim } from './JiggleSim';
 
 export interface SharedAssets {
   baseMeshes: AbstractMesh[];
@@ -63,8 +63,9 @@ export interface SharedAssets {
   animGroups: Record<string, AnimationGroup>;
   /** Runtime uniform scale applied to the fighter's root node */
   scale?: number;
-  /** Spring-bone configs for secondary motion (e.g. breast jiggle). Set from CharacterMeta. */
-  jiggleBones?: readonly JiggleBoneConfig[];
+  /** Unified jiggle/cloth configuration — bones, colliders (sphere/capsule
+   * + plate), lateral pairs. Set from CharacterMeta. */
+  jiggle?: JiggleConfig;
   /** If true, meshes with emissive material should be registered with the scene GlowLayer. */
   glowEmissive?: boolean;
 }
@@ -167,6 +168,10 @@ export class Fighter {
   private _composite!: CompositeAnimController;
   private _skeleton: Skeleton | null = null;
   private _jiggleSim: JiggleSim | null = null;
+
+  get jiggleSim(): JiggleSim | null {
+    return this._jiggleSim;
+  }
 
   // Visual interpolation for remote fighter — smooths rollback corrections
   // so the opponent doesn't visually teleport when mispredictions are corrected.
@@ -353,8 +358,8 @@ export class Fighter {
     this._composite = new CompositeAnimController(this.scene, this.playerIndex);
     this._composite.build(this.animGroups);
 
-    if (assets.jiggleBones?.length && clonedSkeleton) {
-      this._jiggleSim = new JiggleSim(clonedSkeleton, assets.jiggleBones);
+    if (assets.jiggle?.bones.length && clonedSkeleton) {
+      this._jiggleSim = new JiggleSim(clonedSkeleton, assets.jiggle, this.rootNode);
     }
 
     this.rootNode.position.copyFrom(this.position);

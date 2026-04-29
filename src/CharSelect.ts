@@ -6,6 +6,7 @@ import {
   type AbstractMesh,
   type AnimationGroup,
   type FreeCamera,
+  type Observer,
   Quaternion,
   type Scene,
   type Skeleton,
@@ -20,6 +21,7 @@ import {
   remapAnimationTarget,
 } from './fighter/cloneBindings';
 import type { SharedAssets } from './fighter/Fighter';
+import { JiggleSim } from './fighter/JiggleSim';
 
 const CYCLE_ANIMS: readonly AnimKey[] = ['victorySmug', 'introTalking'];
 const CYCLE_INTERVAL_MS = 4000;
@@ -34,9 +36,13 @@ class SelectSlot {
   private cycleInterval: ReturnType<typeof setInterval> | null = null;
   private cycleIndex = 0;
   private cycleAnims: readonly AnimKey[] = CYCLE_ANIMS;
+  private jiggleSim: JiggleSim | null = null;
+  private renderObserver: Observer<Scene> | null = null;
+  private lastFrameMs = 0;
+  private blendingEnabled = false;
 
   constructor(
-    scene: Scene,
+    private readonly scene: Scene,
     private xOffset: number,
   ) {
     this.positionNode = new TransformNode(`cs_slot_${xOffset}`, scene);
@@ -79,6 +85,19 @@ class SelectSlot {
       clonedGroup.stop();
       this.currentAnimGroups[name] = clonedGroup;
     }
+    this.blendingEnabled = false;
+
+    // Spring-bone secondary motion (cloth/hair/breast). Same setup as Fighter.
+    if (assets.jiggle?.bones.length && clonedSkeleton) {
+      this.jiggleSim = new JiggleSim(clonedSkeleton, assets.jiggle, this.positionNode);
+      this.lastFrameMs = performance.now();
+      this.renderObserver = this.scene.onBeforeRenderObservable.add(() => {
+        const now = performance.now();
+        const dt = now - this.lastFrameMs;
+        this.lastFrameMs = now;
+        this.jiggleSim?.update(dt);
+      });
+    }
 
     this._startCycle();
   }
@@ -90,6 +109,17 @@ class SelectSlot {
       if (ag !== target) ag.stop();
     }
     target.play(loop);
+    // After the first play settles the bones into pose, enable blending for
+    // subsequent transitions so spring physics doesn't get kicked.
+    if (!this.blendingEnabled) {
+      this.blendingEnabled = true;
+      for (const ag of Object.values(this.currentAnimGroups)) {
+        for (const ta of ag.targetedAnimations) {
+          ta.animation.enableBlending = true;
+          ta.animation.blendingSpeed = 0.05;
+        }
+      }
+    }
   }
 
   private _startCycle() {
@@ -122,6 +152,12 @@ class SelectSlot {
 
   clear() {
     this._clearCycle();
+    if (this.renderObserver) {
+      this.scene.onBeforeRenderObservable.remove(this.renderObserver);
+      this.renderObserver = null;
+    }
+    this.jiggleSim?.dispose();
+    this.jiggleSim = null;
     for (const ag of Object.values(this.currentAnimGroups)) {
       ag.stop();
       ag.dispose();
