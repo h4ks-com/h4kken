@@ -11,36 +11,64 @@ import {
   PBRMaterial,
   PointLight,
   Scene,
+  SceneLoader,
   ShaderMaterial,
   ShadowGenerator,
   StandardMaterial,
+  TransformNode,
   Vector3,
 } from '@babylonjs/core';
+import { type ArenaConfig, DEFAULT_ARENA_ID, getArenaConfig } from './arenas';
 import { isTouchDevice } from './MobileControls';
 
 export class Stage {
   scene: Scene;
   flameLights: PointLight[];
   time: number;
+  arena: ArenaConfig;
 
-  constructor(scene: Scene) {
+  constructor(scene: Scene, arenaId: string = DEFAULT_ARENA_ID) {
     this.scene = scene;
     this.flameLights = [];
     this.time = 0;
+    this.arena = getArenaConfig(arenaId);
     this.build();
   }
 
   build() {
     this.setupLighting();
     this.buildArena();
-    this.createBackdrop();
-    this.buildSky();
+    if (this.arena.showDefaultBackdrop) {
+      this.createBackdrop();
+    }
+    if (this.arena.showSky) {
+      this.buildSky();
+    }
+    if (this.arena.scenery.glb) {
+      // Fire-and-forget — async load. Freeze runs immediately on sync meshes;
+      // the GLB scenery freezes itself in its own callback when loaded.
+      void this.loadArenaGlb();
+    }
 
-    // Linear fog — Babylon fog is in scene
+    if (this.arena.clearColor) {
+      // Re-enable per-frame clear when there's no full-screen sky dome to
+      // overwrite the framebuffer; otherwise garbage pixels accumulate.
+      this.scene.autoClear = true;
+      this.scene.autoClearDepthAndStencil = true;
+      this.scene.clearColor = this.arena.clearColor.toColor4(1);
+    }
+
     this.scene.fogMode = Scene.FOGMODE_LINEAR;
-    this.scene.fogColor = new Color3(0.6, 0.8, 0.933);
-    this.scene.fogStart = 40;
-    this.scene.fogEnd = 90;
+    const fog = this.arena.fog;
+    if (fog) {
+      this.scene.fogColor = fog.color;
+      this.scene.fogStart = fog.start;
+      this.scene.fogEnd = fog.end;
+    } else {
+      this.scene.fogColor = new Color3(0.6, 0.8, 0.933);
+      this.scene.fogStart = 40;
+      this.scene.fogEnd = 90;
+    }
 
     this._freezeStatics();
   }
@@ -96,6 +124,13 @@ export class Stage {
 
   buildArena() {
     const arenaRadius = 14;
+
+    if (this.arena.hideDefaultFloor) {
+      // Skip cosmetic platform/ring/ground — the arena GLB supplies its own floor.
+      // Pillars are controlled separately via showPillars.
+      this._buildPillars(arenaRadius);
+      return;
+    }
 
     // Main platform
     const platform = MeshBuilder.CreateCylinder(
@@ -165,7 +200,14 @@ export class Stage {
     groundMat.metallic = 0;
     ground.material = groundMat;
 
-    // Pillars with flame lights
+    this._buildPillars(arenaRadius);
+  }
+
+  private _buildPillars(arenaRadius: number) {
+    if (!this.arena.showPillars) {
+      return;
+    }
+
     const pillarAngles = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
     const pillarDist = arenaRadius + 1.5;
 
@@ -340,13 +382,57 @@ export class Stage {
         uniforms: ['worldViewProjection', 'topColor', 'horizColor', 'bottomColor'],
       },
     );
-    skyMat.setColor3('topColor', new Color3(0.2, 0.533, 0.8));
-    skyMat.setColor3('horizColor', new Color3(0.6, 0.8, 0.933));
-    skyMat.setColor3('bottomColor', new Color3(0.533, 0.667, 0.467));
+    const colors = this.arena.skyColors;
+    if (colors) {
+      skyMat.setColor3('topColor', colors.top);
+      skyMat.setColor3('horizColor', colors.horiz);
+      skyMat.setColor3('bottomColor', colors.bottom);
+    } else {
+      skyMat.setColor3('topColor', new Color3(0.2, 0.533, 0.8));
+      skyMat.setColor3('horizColor', new Color3(0.6, 0.8, 0.933));
+      skyMat.setColor3('bottomColor', new Color3(0.533, 0.667, 0.467));
+    }
     skyMat.backFaceCulling = false;
     sky.material = skyMat;
-    // Sky should not receive fog
     sky.applyFog = false;
+  }
+
+  private async loadArenaGlb(): Promise<void> {
+    const scenery = this.arena.scenery;
+    if (!scenery.glb) return;
+    try {
+      const lastSlash = scenery.glb.lastIndexOf('/');
+      const dir = lastSlash >= 0 ? scenery.glb.substring(0, lastSlash + 1) : '';
+      const file = lastSlash >= 0 ? scenery.glb.substring(lastSlash + 1) : scenery.glb;
+      const result = await SceneLoader.ImportMeshAsync(null, '/' + dir, file, this.scene);
+
+      const root = new TransformNode(`arenaRoot_${this.arena.id}`, this.scene);
+      const scale = scenery.scale ?? 1;
+      root.scaling.set(scale, scale, scale);
+      if (scenery.position) {
+        root.position.set(scenery.position.x, scenery.position.y, scenery.position.z);
+      }
+      if (scenery.rotationY !== undefined) {
+        root.rotation.y = scenery.rotationY;
+      }
+
+      for (const m of result.meshes) {
+        if (m.parent === null) m.parent = root;
+        m.receiveShadows = true;
+        m.alwaysSelectAsActiveMesh = true;
+        m.doNotSyncBoundingInfo = true;
+        // Do NOT freeze materials — they were compiled by the GLB loader before
+        // receiveShadows was set, so they need one recompile to include shadow
+        // sampling code. Freezing here would permanently lock out shadows.
+        // The world matrix is still frozen since the scenery never moves.
+        m.freezeWorldMatrix();
+        // Register as shadow caster so walls/columns/floor cast shadows on each
+        // other. _shadowGen is already sized for the device (1024 mobile / 2048 desktop).
+        this._shadowGen?.addShadowCaster(m, true);
+      }
+    } catch (err) {
+      console.error(`[Stage] failed to load arena ${this.arena.id}:`, err);
+    }
   }
 
   update(deltaTime: number) {

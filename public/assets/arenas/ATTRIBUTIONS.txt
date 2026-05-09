@@ -1,0 +1,46 @@
+H4KKEN — Arena scenery attributions
+====================================
+
+Each model below ships in public/assets/arenas/ in modified form
+(decimated mesh + downscaled textures + recentred origin). Originals
+remain copyright their respective authors under the licenses noted.
+
+----------------------------------------------------------------------
+dojo.glb — "Modular Dojo Kit (Free Demo)"
+  Author:  joaobaltieri
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/modular-dojo-kit-free-demo-d3a2bfdebb3e46c4bd17864b796b8d8c
+  Notes:   Demo tile pieces removed; only the assembled dojo room shipped.
+
+----------------------------------------------------------------------
+colosseum.glb — "Previz-Lowpoly Colosseum with concept textures"
+  Author:  neberkenezer
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/previz-lowpoly-colosseum-with-concept-textures-c1c2391478a34ba9a4c5f254c662fb30
+  Notes:   Scaled 0.22, joined into one mesh, decimated to ~99k tris.
+
+----------------------------------------------------------------------
+temple.glb — "Sunrise Temple Environment"
+  Author:  Bl4ckGh0st
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/sunrise-temple-environment-aebbcf55f5e34401bba8220743596060
+  Notes:   Heavily decimated (~3% of original tris) and JPEG-compressed
+           textures to fit web budget.
+
+----------------------------------------------------------------------
+sky_temple.glb — "Floating Japanese Bell Temple"
+  Author:  AlfieWilson
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/floating-japanese-bell-temple-c203dd04fadd4cf8be80553a0c0cbb8c
+  Notes:   Recentred to origin; otherwise unmodified.
+
+----------------------------------------------------------------------
+hell.glb — "Hell arena"
+  Author:  3dmanx888
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/hell-arena-b24597cc453a4919a97037be03abf38d
+  Notes:   Used as-is; placement tuned via arena debug page.
+
+----------------------------------------------------------------------
+default scenery (Mountain Field) — built in code (src/Stage.ts), no
+external assets. No attribution required.

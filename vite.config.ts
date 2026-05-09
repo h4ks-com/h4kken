@@ -10,6 +10,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         debug: resolve(__dirname, 'debug.html'),
+        arenaDebug: resolve(__dirname, 'arena-debug.html'),
       },
     },
   },

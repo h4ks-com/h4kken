@@ -18,10 +18,13 @@ export class FightCamera {
   shakeDuration: number;
   shakeTimer: number;
   orbitAngle: number;
+  /** When true, orbit angle is held at its initial behind-the-line position
+   * regardless of fighter rotation. Used by linear arenas (dojo, temple,
+   * floating shrine) where the scenery is only modelled from one side. */
+  lockOrbit: boolean = false;
 
   constructor(camera: FreeCamera) {
     this.camera = camera;
-    // Babylon left-handed: Z away from camera, so initial position has negative Z
     this.targetPosition = new Vector3(0, 3, -10);
     this.targetLookAt = new Vector3(0, 1.2, 0);
     this.currentLookAt = new Vector3(0, 1.2, 0);
@@ -33,9 +36,7 @@ export class FightCamera {
     this.shakeIntensity = 0;
     this.shakeDuration = 0;
     this.shakeTimer = 0;
-    // Orbit angle starts at -PI/2 so camera is behind fighters (negative Z side)
     this.orbitAngle = -Math.PI / 2;
-
     this.camera.position.copyFrom(this.targetPosition);
     this.camera.setTarget(this.targetLookAt);
   }
@@ -51,7 +52,7 @@ export class FightCamera {
     const dz = remotePos.z - localPos.z;
     const fighterDist = Math.sqrt(dx * dx + dz * dz);
 
-    if (fighterDist > 0.1) {
+    if (fighterDist > 0.1 && !this.lockOrbit) {
       const fightAngle = Math.atan2(dz, dx);
       // Camera orbits perpendicular to the fight axis. Subtract PI/2 so the camera
       // stays on the -Z side (initial orbitAngle), keeping local player on screen LEFT.
@@ -91,6 +92,18 @@ export class FightCamera {
     }
 
     this.camera.setTarget(this.currentLookAt);
+  }
+
+  /** Hard-snap the camera position to match the current orbitAngle with no
+   * lerp lag. Call after changing orbitAngle at arena load time. */
+  snapOrbit(depth = 8): void {
+    this.targetPosition.set(
+      Math.cos(this.orbitAngle) * depth,
+      this.heightOffset,
+      Math.sin(this.orbitAngle) * depth,
+    );
+    this.camera.position.copyFrom(this.targetPosition);
+    this.camera.setTarget(this.targetLookAt);
   }
 
   shake(intensity: number, duration: number) {

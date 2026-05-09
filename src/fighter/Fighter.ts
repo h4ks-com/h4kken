@@ -24,6 +24,7 @@ import {
   TransformNode,
   Vector3,
 } from '@babylonjs/core';
+import type { ArenaBounds } from '../arenas';
 import type { HitResult, MoveData } from '../combat/CombatSystem';
 import { MOVES } from '../combat/moves';
 import { FIGHTER_STATE, GAME_CONSTANTS, HIT_RESULT } from '../constants';
@@ -117,6 +118,9 @@ export interface FighterSnapshot {
 }
 
 export class Fighter {
+  /** Per-arena fight bound. Null = default radial clamp (radius 12). */
+  static arenaBounds: ArenaBounds | null = null;
+
   playerIndex: number;
   scene: Scene;
   rootNode: TransformNode | null;
@@ -968,14 +972,23 @@ export class Fighter {
       this.velocity.y = 0;
     }
 
-    const arenaRadius = GC.ARENA_WIDTH;
-    const distFromCenter = Math.sqrt(
-      this.position.x * this.position.x + this.position.z * this.position.z,
-    );
-    if (distFromCenter > arenaRadius) {
-      const scale = arenaRadius / distFromCenter;
-      this.position.x *= scale;
-      this.position.z *= scale;
+    // Optional rectangular bound (set per-arena for walled sceneries) overrides
+    // the default radial clamp. Static field — Game updates it when an arena
+    // with a `bounds` config is loaded.
+    const b = Fighter.arenaBounds;
+    if (b?.kind === 'rect') {
+      if (this.position.x > b.halfWidth) this.position.x = b.halfWidth;
+      else if (this.position.x < -b.halfWidth) this.position.x = -b.halfWidth;
+      if (this.position.z > b.halfDepth) this.position.z = b.halfDepth;
+      else if (this.position.z < -b.halfDepth) this.position.z = -b.halfDepth;
+    } else {
+      const radius = b?.kind === 'circle' ? b.radius : GC.ARENA_WIDTH;
+      const dist = Math.sqrt(this.position.x * this.position.x + this.position.z * this.position.z);
+      if (dist > radius) {
+        const scale = radius / dist;
+        this.position.x *= scale;
+        this.position.z *= scale;
+      }
     }
 
     if (Math.abs(this.velocity.z) > 0.001) {

@@ -46,3 +46,6 @@ coturn/
 
 # Runtime logs
 logs/
+
+# Playwright MCP session data
+.playwright-mcp/

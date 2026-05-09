@@ -71,6 +71,8 @@ export class Game {
   charSelect: CharSelect | null = null;
   _pendingMode: 'practice' | 'online' = 'practice';
   _pendingCharId: string = DEFAULT_P1;
+  /** Selected arena id; persists across matches. Practice mode is locked to default. */
+  currentArenaId: string = 'default';
   round: number;
   roundTimer: number;
   roundTimerAccum: number;
@@ -279,7 +281,15 @@ export class Game {
   async init() {
     this.ui.setLoadingText('Loading assets...');
 
-    this.stage = new Stage(this.scene);
+    // Allow ?arena=ID URL param to preselect an arena (handy for dev/screenshots).
+    const urlArena = new URLSearchParams(window.location.search).get('arena');
+    if (urlArena) this.currentArenaId = urlArena;
+
+    this.stage = new Stage(this.scene, this.currentArenaId);
+    this.fightCamera.lockOrbit = !!this.stage.arena.linear;
+    this.fightCamera.orbitAngle = -Math.PI / 2;
+    this.fightCamera.snapOrbit();
+    Fighter.arenaBounds = this.stage.arena.bounds ?? null;
 
     const charEntries = Object.values(CHARACTERS);
     let loaded = 0;
@@ -301,6 +311,7 @@ export class Game {
     void this.bgm.load(this.scene);
 
     this.charSelect = new CharSelect(this.scene, this.camera, this.allCharAssets);
+    this.charSelect.setShadowGenerator(this.stage?.shadowGenerator ?? null);
     this.createFighters();
 
     this.ui.setLoadingProgress(1);
@@ -364,11 +375,19 @@ export class Game {
       this.network.joinMatch(name, this._pendingCharId);
     }
 
-    this.charSelect?.show(mode, {
-      onConfirm: (p1Id, p2Id) => this._onCharSelectConfirm(p1Id, p2Id),
+    this.charSelect?.show(
+      mode,
+      {
+      onConfirm: (p1Id, p2Id, arenaId) => this._onCharSelectConfirm(p1Id, p2Id, arenaId),
       onPick: (charId) => {
         this._pendingCharId = charId;
         this.network.sendPick(charId);
+      },
+      onArenaPick: (arenaId) => {
+        this.network.sendArenaPick(arenaId);
+      },
+      onArenaPreview: (arenaId) => {
+        this.setArena(arenaId);
       },
       onReady: () => {
         this.network.sendReady();
@@ -380,15 +399,87 @@ export class Game {
         this.state = GAME_STATE.MENU;
         this.ui.showScreen('menu-screen');
       },
-    });
+      },
+      this.currentArenaId,
+    );
   }
 
-  private _onCharSelectConfirm(p1Id: string, p2Id: string) {
+  private _onCharSelectConfirm(p1Id: string, p2Id: string, arenaId: string) {
     this.charSelect?.hide();
     if (this._pendingMode === 'practice') {
+      // Practice arena selection is honoured here. Online resolves arena
+      // separately from server-reconciled votes, and never reaches this path.
+      if (arenaId !== this.currentArenaId) {
+        this.setArena(arenaId);
+      }
       this.reinitFighter(0, p1Id);
       this.reinitFighter(1, p2Id);
       this.startPractice();
+    }
+  }
+
+  /** Tear down the current arena meshes and rebuild Stage with the new id.
+   * Fighters and UI are untouched — only stage scenery, sky, lights and
+   * camera-orbit lock are swapped. */
+  setArena(arenaId: string): void {
+    if (arenaId === this.currentArenaId && this.stage) return;
+    this.currentArenaId = arenaId;
+    this._disposeStageMeshes();
+    this.stage = new Stage(this.scene, arenaId);
+    this.fightCamera.lockOrbit = !!this.stage.arena.linear;
+    this.fightCamera.orbitAngle = -Math.PI / 2;
+    this.fightCamera.snapOrbit();
+    Fighter.arenaBounds = this.stage.arena.bounds ?? null;
+    this.charSelect?.setShadowGenerator(this.stage.shadowGenerator);
+  }
+
+  /** Remove every mesh / light that the previous Stage created. Identifies
+   * stage meshes as those neither owned by a Fighter nor part of CharSelect
+   * nor a character template. The character templates are scene-resident
+   * disabled meshes used as clone sources (Fighter.SharedAssets.baseMeshes)
+   * — disposing them kills the materials shared with every fighter and the
+   * lineup characters in CharSelect, so they must be spared. */
+  private _disposeStageMeshes(): void {
+    const sparedRoots = new Set<unknown>();
+    for (const f of this.fighters) {
+      if (f?.rootNode) sparedRoots.add(f.rootNode);
+    }
+    for (const r of this.charSelect?.displayRoots ?? []) {
+      sparedRoots.add(r);
+    }
+    // Spare every imported GLB root that hosts a character template. We can't
+    // walk to a single ancestor reliably (Babylon glTF loaders nest a few
+    // empties), so add every base mesh and every transform node above it.
+    for (const assets of this.allCharAssets.values()) {
+      for (const baseMesh of assets.baseMeshes) {
+        sparedRoots.add(baseMesh);
+        let p: unknown = baseMesh.parent;
+        while (p) {
+          sparedRoots.add(p);
+          p = (p as { parent: unknown }).parent;
+        }
+      }
+    }
+    const isSpared = (m: { parent: unknown }): boolean => {
+      if (sparedRoots.has(m as unknown)) return true;
+      let p: unknown = m.parent;
+      while (p) {
+        if (sparedRoots.has(p)) return true;
+        p = (p as { parent: unknown }).parent;
+      }
+      return false;
+    };
+    for (const mesh of [...this.scene.meshes]) {
+      if (!isSpared(mesh)) mesh.dispose(false, true);
+    }
+    for (const tn of [...this.scene.transformNodes]) {
+      if (!isSpared(tn)) tn.dispose(false, true);
+    }
+    for (const light of [...this.scene.lights]) {
+      light.dispose(false, true);
+    }
+    for (const mat of [...this.scene.materials]) {
+      if (mat.getBindedMeshes().length === 0) mat.dispose(true, true);
     }
   }
 

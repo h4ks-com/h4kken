@@ -60,6 +60,11 @@ export function setupNetworkEvents(game: Game): void {
     game.charSelect?.updateOpponentPick(msg.characterId);
   });
 
+  game.network.on('opponentArena', (msg) => {
+    if (game.state !== GAME_STATE.CHAR_SELECT) return;
+    game.charSelect?.setOpponentArenaVote(msg.arenaId);
+  });
+
   game.network.on('opponentReady', () => {
     if (game.state !== GAME_STATE.CHAR_SELECT) return;
     game.charSelect?.setOpponentReady();
@@ -71,6 +76,9 @@ export function setupNetworkEvents(game: Game): void {
     const localIdx = game.localPlayerIndex as 0 | 1;
     const opponentIdx = (1 - localIdx) as 0 | 1;
     game.charSelect?.hide();
+    // Reconciled arena from server — apply before fighters spawn so they land
+    // in the correct scenery and bounds.
+    if (msg.arenaId) game.setArena(msg.arenaId);
     game.reinitFighter(localIdx, game._pendingCharId);
     game.reinitFighter(opponentIdx, msg.opponentCharacterId ?? DEFAULT_P1);
     const myName = game.ui.playerNameInput?.value || 'Player';
