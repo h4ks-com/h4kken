@@ -146,8 +146,7 @@ export const CHARACTERS: Record<string, CharacterMeta> = {
   handyc: {
     id: 'handyc',
     name: 'Handyc',
-    // GLB has armature scale=0.01; scale=0.85 gives ~85% of beano's height (intentionally small).
-    scale: 0.0085,
+    scale: 0.85,
   },
   hanna: {
     id: 'hanna',
