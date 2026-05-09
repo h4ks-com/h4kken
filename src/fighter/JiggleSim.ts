@@ -147,6 +147,14 @@ interface BoneState {
   /** 0..1. 1 = full sticky, 0 = free physics. Snaps to 1 on contact, decays
    * when no contact (~5 frames to release). */
   stickyWeight: number;
+  /** 0..1. Per-bone "give in to collision" factor. Rises sharply on contact
+   * (capsule push or plate penetration) and decays slowly otherwise. While
+   * elevated, the bone's spring stiffness is scaled down so collision push
+   * dominates instead of the spring pulling the bone back into the leg.
+   * When contact ends, decay → 0 → full stiffness restored → bone springs
+   * back to rest. Per-bone so colliding chains soften independently of
+   * non-colliding ones. */
+  contactSoftness: number;
 }
 
 const BONE_AXIS = Vector3.Up();
@@ -379,6 +387,7 @@ export class JiggleSim {
         stickyTn: null,
         stickyOffsetLocal: Vector3.Zero(),
         stickyWeight: 0,
+        contactSoftness: 0,
       });
     }
 
@@ -604,6 +613,22 @@ export class JiggleSim {
   collisionDampingEnabled = true;
   /** Stick strength (0=no sticky pull, 1=fully glued). */
   stickStrength = 0.6;
+  /** Per-bone contact softening: when on, a bone in collision has its spring
+   * stiffness scaled down by `contactSoftness * contactSoftFactor` so the
+   * collision push wins instead of the spring fighting back. When contact
+   * ends, contactSoftness decays → 0 → full stiffness restored, bone springs
+   * back to rest. Each bone tracks softness independently so colliding
+   * chains don't soften the others. */
+  contactSofteningEnabled = true;
+  /** 0..1. How much to reduce stiffness at full contact softness.
+   * 0.85 = at peak contact, spring force is 15% of normal. Higher = more
+   * "give", lower = stiffer feel during contact. */
+  contactSoftFactor = 0.85;
+  /** Per-frame ramp toward 1 when in contact (faster = react quicker). */
+  contactSoftAttack = 0.4;
+  /** Per-frame decay toward 0 when out of contact (slower = stays soft longer
+   * after release; higher = snaps back faster). */
+  contactSoftRelease = 0.08;
   /** When ≥ 0, all bones whose name starts with `Cloth_` get their tail
    * position locked along this character-local axis (0=X, 1=Y, 2=Z). The
    * rest tail position captured at init defines the lock plane. With
@@ -980,7 +1005,12 @@ export class JiggleSim {
     if (springDeltaLen > maxSpringDelta) {
       springDelta.scaleInPlace(maxSpringDelta / springDeltaLen);
     }
-    const springForce = springDelta.scale(s.stiffness * dt);
+    // Contact softening: scale spring force by (1 - softness*factor) so a
+    // colliding bone spends less force fighting the collision push.
+    const softMul = this.contactSofteningEnabled
+      ? 1 - s.contactSoftness * this.contactSoftFactor
+      : 1;
+    const springForce = springDelta.scale(s.stiffness * softMul * dt);
     const dampingForce = velocity.scale(-s.drag * dt);
     const accel = springForce.add(dampingForce);
     accel.y -= s.gravityPower * dt;
@@ -1009,6 +1039,8 @@ export class JiggleSim {
     const preColX = next.x;
     const preColY = next.y;
     const preColZ = next.z;
+
+    let inContactThisFrame = false;
 
     // Collider resolution: push tail out of any sphere or capsule collider.
     // Capsules use closest-point-on-segment so cloth can't slip over the top
@@ -1058,6 +1090,7 @@ export class JiggleSim {
           const d = Math.sqrt(d2);
           const push = rLocal / d;
           next.set(cx + dx * push, cy + dy * push, cz + dz * push);
+          inContactThisFrame = true;
           this._diagLogCollision(s.bone.name);
         }
       }
@@ -1082,12 +1115,18 @@ export class JiggleSim {
       rotateVectorByQuat(parentRot, plateForBone.right, plateRightW);
       const halfW = plateForBone.halfWidth;
       const halfH = plateForBone.halfHeight;
+      // 9-point grid (center + 4 corners + 4 edge midpoints) so a leg
+      // capsule can't slip between corner samples.
       const samples: [number, number][] = [
         [0, 0],
         [halfW, halfH],
         [-halfW, halfH],
         [halfW, -halfH],
         [-halfW, -halfH],
+        [halfW, 0],
+        [-halfW, 0],
+        [0, halfH],
+        [0, -halfH],
       ];
       let maxPush = 0;
       for (const [u, v] of samples) {
@@ -1152,8 +1191,28 @@ export class JiggleSim {
           next.y + plateNormalW.y * maxPush,
           next.z + plateNormalW.z * maxPush,
         );
+        inContactThisFrame = true;
         this._diagLogCollision(s.bone.name);
       }
+    }
+
+    // Update per-bone contact softness: ramp up sharply on contact, decay
+    // gradually otherwise. Done before bone state writes since softness
+    // affects next frame's spring force calc.
+    if (this.contactSofteningEnabled) {
+      if (inContactThisFrame) {
+        s.contactSoftness = Math.min(
+          1,
+          s.contactSoftness + this.contactSoftAttack,
+        );
+      } else {
+        s.contactSoftness = Math.max(
+          0,
+          s.contactSoftness - this.contactSoftRelease,
+        );
+      }
+    } else {
+      s.contactSoftness = 0;
     }
 
     // STICKY binding update. Re-set sticky state on contact; decay otherwise.

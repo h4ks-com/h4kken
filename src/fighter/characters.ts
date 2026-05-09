@@ -21,11 +21,17 @@ const sym = (nameTemplate: string, cfg: Omit<JiggleBoneConfig, 'name'>): JiggleB
  * `{prefix}_N`. Optional gradient interpolates stiffness/drag between the
  * root (i=1) and tip (i=N), giving a natural "stiff at top, floppy at end"
  * feel without writing per-bone configs. */
+interface ChainGradient {
+  tipStiffness?: number;
+  tipDrag?: number;
+  tipParentFollow?: number;
+}
+
 const chain = (
   prefix: string,
   count: number,
   base: Omit<JiggleBoneConfig, 'name'>,
-  gradient?: { tipStiffness?: number; tipDrag?: number },
+  gradient?: ChainGradient,
 ): JiggleBoneConfig[] => {
   const out: JiggleBoneConfig[] = [];
   for (let i = 1; i <= count; i++) {
@@ -36,6 +42,9 @@ const chain = (
     }
     if (gradient?.tipDrag !== undefined && base.drag !== undefined) {
       cfg.drag = base.drag + (gradient.tipDrag - base.drag) * t;
+    }
+    if (gradient?.tipParentFollow !== undefined && base.parentFollow !== undefined) {
+      cfg.parentFollow = base.parentFollow + (gradient.tipParentFollow - base.parentFollow) * t;
     }
     out.push(cfg);
   }
@@ -48,7 +57,7 @@ const chains = (
   prefixes: readonly string[],
   count: number,
   base: Omit<JiggleBoneConfig, 'name'>,
-  gradient?: { tipStiffness?: number; tipDrag?: number },
+  gradient?: ChainGradient,
 ): JiggleBoneConfig[] => prefixes.flatMap((p) => chain(p, count, base, gradient));
 
 /** Generate small cloth plates for every bone in N chains. Each plate gives
@@ -146,9 +155,9 @@ export const CHARACTERS: Record<string, CharacterMeta> = {
     scale: 1.7,
     glowEmissive: true,
   },
-  valware: {
-    id: 'valware',
-    name: 'Valware',
+  liu: {
+    id: 'liu',
+    name: 'Liu',
     scale: 1.85,
     jiggle: {
       bones: [
@@ -191,46 +200,41 @@ export const CHARACTERS: Record<string, CharacterMeta> = {
             'Cloth_Back_C',
             'Cloth_Back_R',
           ],
-          10,
+          5,
           {
-            stiffness: 0.35,
-            drag: 0.4,
+            stiffness: 1.0,
+            drag: 0.6,
             gravityPower: 0.003,
             parentFollow: 1.0,
           },
-          { tipStiffness: 0.1, tipDrag: 0.25 },
+          { tipStiffness: 0.15, tipDrag: 0.25, tipParentFollow: 0.4 },
         ),
       ],
       colliders: [
-        // UpLeg capsule starts mid-thigh (tStart=0.5) so it sits below the
-        // clothing instead of poking up to the hip.
-        { bone: 'mixamorig:LeftUpLeg', toBone: 'mixamorig:LeftLeg', radius: 0.11, tStart: 0.5 },
-        { bone: 'mixamorig:LeftLeg', toBone: 'mixamorig:LeftFoot', radius: 0.16 },
-        { bone: 'mixamorig:RightUpLeg', toBone: 'mixamorig:RightLeg', radius: 0.11, tStart: 0.5 },
-        { bone: 'mixamorig:RightLeg', toBone: 'mixamorig:RightFoot', radius: 0.16 },
+        { bone: 'mixamorig:LeftUpLeg', toBone: 'mixamorig:LeftLeg', radius: 0.055, tStart: 0.5 },
+        { bone: 'mixamorig:LeftLeg', toBone: 'mixamorig:LeftFoot', radius: 0.14 },
+        { bone: 'mixamorig:RightUpLeg', toBone: 'mixamorig:RightLeg', radius: 0.055, tStart: 0.5 },
+        { bone: 'mixamorig:RightLeg', toBone: 'mixamorig:RightFoot', radius: 0.14 },
       ],
-      // Cloth plates: each plate sized to cover the cloth slice that bone
-      // owns (1/N_chains of width × 1/N_bones of height). Front cloth X-range
-      // ≈ 0.22m → plate ~0.072m wide. Back X-range ≈ 0.28m → plate ~0.093m.
-      // Heights ~0.030m (chain height ≈ 0.30m / 10 bones). Push direction is
-      // the plate normal — forward for front panel, backward for back.
+      // Plate height oversized vs bone segment (~0.062m) so consecutive
+      // plates along a chain overlap → no vertical gap for legs to slip through.
       plateColliders: [
-        ...chainPlates(['Cloth_Front_L', 'Cloth_Front_C', 'Cloth_Front_R'], 10, {
-          width: 0.072,
-          height: 0.031,
+        ...chainPlates(['Cloth_Front_L', 'Cloth_Front_C', 'Cloth_Front_R'], 5, {
+          width: 0.085,
+          height: 0.10,
           normal: [0, 0, 1],
         }),
-        ...chainPlates(['Cloth_Back_L', 'Cloth_Back_C', 'Cloth_Back_R'], 10, {
-          width: 0.093,
-          height: 0.028,
+        ...chainPlates(['Cloth_Back_L', 'Cloth_Back_C', 'Cloth_Back_R'], 5, {
+          width: 0.105,
+          height: 0.09,
           normal: [0, 0, -1],
         }),
       ],
       lateralPairs: [
-        { chainA: 'Cloth_Front_L', chainB: 'Cloth_Front_C', count: 10, stiffness: 0.5 },
-        { chainA: 'Cloth_Front_C', chainB: 'Cloth_Front_R', count: 10, stiffness: 0.5 },
-        { chainA: 'Cloth_Back_L', chainB: 'Cloth_Back_C', count: 10, stiffness: 0.5 },
-        { chainA: 'Cloth_Back_C', chainB: 'Cloth_Back_R', count: 10, stiffness: 0.5 },
+        { chainA: 'Cloth_Front_L', chainB: 'Cloth_Front_C', count: 5, stiffness: 0.15 },
+        { chainA: 'Cloth_Front_C', chainB: 'Cloth_Front_R', count: 5, stiffness: 0.15 },
+        { chainA: 'Cloth_Back_L', chainB: 'Cloth_Back_C', count: 5, stiffness: 0.15 },
+        { chainA: 'Cloth_Back_C', chainB: 'Cloth_Back_R', count: 5, stiffness: 0.15 },
       ],
     },
   },

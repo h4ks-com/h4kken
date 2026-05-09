@@ -30,7 +30,7 @@ import type { Fighter, SharedAssets } from './fighter/Fighter';
 import { Fighter as FighterClass } from './fighter/Fighter';
 import { JiggleSim } from './fighter/JiggleSim';
 
-const DEFAULT_CHAR = 'valware';
+const DEFAULT_CHAR = 'liu';
 const DEFAULT_ANIM: AnimKey = 'walk';
 
 /** Minimal character preview — clones a single character at origin, runs
@@ -161,7 +161,14 @@ async function main(): Promise<void> {
   const tSticky = document.getElementById('t-sticky') as HTMLInputElement;
   const tDamping = document.getElementById('t-damping') as HTMLInputElement;
   const tPendulum = document.getElementById('t-pendulum') as HTMLInputElement;
+  const tContactSoft = document.getElementById('t-contact-soft') as HTMLInputElement;
   const stickSlider = document.getElementById('stick') as HTMLInputElement;
+  const softFactorSlider = document.getElementById('soft-factor') as HTMLInputElement;
+  const softFactorVal = document.getElementById('soft-factor-val') as HTMLSpanElement;
+  const softAttackSlider = document.getElementById('soft-attack') as HTMLInputElement;
+  const softAttackVal = document.getElementById('soft-attack-val') as HTMLSpanElement;
+  const softReleaseSlider = document.getElementById('soft-release') as HTMLInputElement;
+  const softReleaseVal = document.getElementById('soft-release-val') as HTMLSpanElement;
   const stickVal = document.getElementById('stick-val') as HTMLSpanElement;
   const liveStats = document.getElementById('live-stats') as HTMLPreElement;
   const collidersList = document.getElementById('colliders-list') as HTMLDivElement;
@@ -541,6 +548,10 @@ async function main(): Promise<void> {
     sim.stickyEnabled = tSticky.checked;
     sim.collisionDampingEnabled = tDamping.checked;
     sim.stickStrength = parseFloat(stickSlider.value);
+    sim.contactSofteningEnabled = tContactSoft.checked;
+    sim.contactSoftFactor = parseFloat(softFactorSlider.value);
+    sim.contactSoftAttack = parseFloat(softAttackSlider.value);
+    sim.contactSoftRelease = parseFloat(softReleaseSlider.value);
     // Pendulum toggle: lock all cloth bones to character YZ plane (axis 0 = X).
     sim.forceClothLockAxisIdx = tPendulum.checked ? 0 : -1;
   };
@@ -576,11 +587,23 @@ async function main(): Promise<void> {
   });
 
   // Wire toggle change events.
-  for (const cb of [tColliders, tPlates, tLateral, tSticky, tDamping, tPendulum]) {
+  for (const cb of [tColliders, tPlates, tLateral, tSticky, tDamping, tPendulum, tContactSoft]) {
     cb.addEventListener('change', applyToggles);
   }
   stickSlider.addEventListener('input', () => {
     stickVal.textContent = parseFloat(stickSlider.value).toFixed(2);
+    applyToggles();
+  });
+  softFactorSlider.addEventListener('input', () => {
+    softFactorVal.textContent = parseFloat(softFactorSlider.value).toFixed(2);
+    applyToggles();
+  });
+  softAttackSlider.addEventListener('input', () => {
+    softAttackVal.textContent = parseFloat(softAttackSlider.value).toFixed(2);
+    applyToggles();
+  });
+  softReleaseSlider.addEventListener('input', () => {
+    softReleaseVal.textContent = parseFloat(softReleaseSlider.value).toFixed(2);
     applyToggles();
   });
 

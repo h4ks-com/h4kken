@@ -68,12 +68,34 @@
     <label><input type="checkbox" id="t-sticky" checked> Sticky binding</label>
     <label><input type="checkbox" id="t-damping" checked> Collision damping</label>
     <label><input type="checkbox" id="t-pendulum"> Lock cloth chains to character YZ plane (pendulum only — no sideways)</label>
+    <label><input type="checkbox" id="t-contact-soft" checked> Contact softening (give in to collision; spring back when free)</label>
     <div class="row">
       <label>Stick strength</label>
       <span class="val" id="stick-val">0.60</span>
     </div>
     <div style="grid-column: 1 / -1;">
       <input type="range" id="stick" min="0" max="1" step="0.05" value="0.6" style="width: 100%;">
+    </div>
+    <div class="row">
+      <label>Soft factor (0=rigid · 1=full give)</label>
+      <span class="val" id="soft-factor-val">0.85</span>
+    </div>
+    <div style="grid-column: 1 / -1;">
+      <input type="range" id="soft-factor" min="0" max="1" step="0.05" value="0.85" style="width: 100%;">
+    </div>
+    <div class="row">
+      <label>Soft attack (ramp-up on contact)</label>
+      <span class="val" id="soft-attack-val">0.40</span>
+    </div>
+    <div style="grid-column: 1 / -1;">
+      <input type="range" id="soft-attack" min="0.05" max="1" step="0.05" value="0.4" style="width: 100%;">
+    </div>
+    <div class="row">
+      <label>Soft release (decay when free)</label>
+      <span class="val" id="soft-release-val">0.08</span>
+    </div>
+    <div style="grid-column: 1 / -1;">
+      <input type="range" id="soft-release" min="0.01" max="0.5" step="0.01" value="0.08" style="width: 100%;">
     </div>
     <h3>Live stats</h3>
     <pre id="live-stats" style="font-size:10px;color:#8cf;font-family:monospace;margin:0;line-height:1.4;background:#111;padding:6px;border-radius:3px;"></pre>

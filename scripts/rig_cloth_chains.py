@@ -12,7 +12,10 @@ Workflow:
 
 Args via env vars (all optional except where noted):
   CLOTH_VG          name of the vertex group marking cloth verts. Default 'cloth_main'.
-  PARENT_BONE       body bone the chain roots parent to. Default 'mixamorig:Hips'.
+  PARENT_BONE       body bone the chain roots parent to. Default 'mixamorig:Spine'.
+                    Use Spine (not Hips) so the cloth top tracks waist-bend
+                    motions — Hips stays still while Spine rotates forward
+                    during torso lean / crouch / attack windups.
   CHAIN_PREFIX      prefix for generated bones. Default 'Cloth'.
                     Bones are named {prefix}_{Front|Back}_{L|C|R}_{1..N}.
   N_BONES           bones per chain. Default 10.
@@ -34,13 +37,13 @@ from mathutils import Vector, kdtree
 
 
 CLOTH_VG = os.environ.get('CLOTH_VG', 'cloth_main')
-PARENT_BONE = os.environ.get('PARENT_BONE', 'mixamorig:Hips')
+PARENT_BONE = os.environ.get('PARENT_BONE', 'mixamorig:Spine')
 CHAIN_PREFIX = os.environ.get('CHAIN_PREFIX', 'Cloth')
 N_BONES = int(os.environ.get('N_BONES', '10'))
 TOP_SMOOTH_T = float(os.environ.get('TOP_SMOOTH_T', '0.18'))
 BACKFACE_R = float(os.environ.get('BACKFACE_R', '0.005'))
 DEFAULT_STRIP = [
-    'mixamorig:Spine', 'mixamorig:Spine1', 'mixamorig:Spine2',
+    'mixamorig:Hips', 'mixamorig:Spine1', 'mixamorig:Spine2',
     'mixamorig:LeftUpLeg', 'mixamorig:RightUpLeg',
     'mixamorig:LeftLeg', 'mixamorig:RightLeg',
     'mixamorig:LeftFoot', 'mixamorig:RightFoot',

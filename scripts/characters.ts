@@ -162,8 +162,8 @@ export const CHARACTERS: CharacterSource[] = [
     },
   },
   {
-    id: 'valware',
-    source: path.join(ASSETS_SOURCE, 'valware.glb'),
+    id: 'liu',
+    source: path.join(ASSETS_SOURCE, 'liu.glb'),
     groundCorrections: {
       Death01:              -0.3005,
       Death02:              -0.1866,
