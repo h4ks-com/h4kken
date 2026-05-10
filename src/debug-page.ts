@@ -18,6 +18,7 @@ import {
   TransformNode,
   Vector3,
 } from '@babylonjs/core';
+import { DragNumber } from './DragNumber';
 import { JiggleDebug } from './debug/JiggleDebug';
 import { ANIM_CONFIG, type AnimKey } from './fighter/animations';
 import { CHARACTERS } from './fighter/characters';
@@ -152,8 +153,6 @@ async function main(): Promise<void> {
   const animSelect = document.getElementById('anim-select') as HTMLSelectElement;
   const showDebug = document.getElementById('show-debug') as HTMLInputElement;
   const paused = document.getElementById('paused') as HTMLInputElement;
-  const speedSlider = document.getElementById('speed') as HTMLInputElement;
-  const speedVal = document.getElementById('speed-val') as HTMLSpanElement;
   const resetCam = document.getElementById('reset-cam') as HTMLButtonElement;
   const tColliders = document.getElementById('t-colliders') as HTMLInputElement;
   const tPlates = document.getElementById('t-plates') as HTMLInputElement;
@@ -162,14 +161,12 @@ async function main(): Promise<void> {
   const tDamping = document.getElementById('t-damping') as HTMLInputElement;
   const tPendulum = document.getElementById('t-pendulum') as HTMLInputElement;
   const tContactSoft = document.getElementById('t-contact-soft') as HTMLInputElement;
-  const stickSlider = document.getElementById('stick') as HTMLInputElement;
-  const softFactorSlider = document.getElementById('soft-factor') as HTMLInputElement;
-  const softFactorVal = document.getElementById('soft-factor-val') as HTMLSpanElement;
-  const softAttackSlider = document.getElementById('soft-attack') as HTMLInputElement;
-  const softAttackVal = document.getElementById('soft-attack-val') as HTMLSpanElement;
-  const softReleaseSlider = document.getElementById('soft-release') as HTMLInputElement;
-  const softReleaseVal = document.getElementById('soft-release-val') as HTMLSpanElement;
-  const stickVal = document.getElementById('stick-val') as HTMLSpanElement;
+
+  const speedDN       = new DragNumber(document.getElementById('speed-val')!,       1.00, 0.02,  0.005, 2, 0.05, 2.0);
+  const stickDN       = new DragNumber(document.getElementById('stick-val')!,       0.60, 0.01,  0.002, 2, 0,    1.0);
+  const softFactorDN  = new DragNumber(document.getElementById('soft-factor-val')!, 0.85, 0.01,  0.002, 2, 0,    1.0);
+  const softAttackDN  = new DragNumber(document.getElementById('soft-attack-val')!, 0.40, 0.01,  0.002, 2, 0.05, 1.0);
+  const softReleaseDN = new DragNumber(document.getElementById('soft-release-val')!,0.08, 0.005, 0.001, 3, 0.01, 0.5);
   const liveStats = document.getElementById('live-stats') as HTMLPreElement;
   const collidersList = document.getElementById('colliders-list') as HTMLDivElement;
   const collidersCount = document.getElementById('colliders-count') as HTMLSpanElement;
@@ -350,27 +347,13 @@ async function main(): Promise<void> {
         const label = document.createElement('label');
         const baseName = `${short(info.boneName)}${info.toBoneName ? '→' + short(info.toBoneName) : ''}`;
         label.textContent = partner !== undefined ? `L/R ${baseName}` : baseName;
-        const slider = document.createElement('input');
-        slider.type = 'range';
-        slider.min = '0.01';
-        slider.max = '0.30';
-        slider.step = '0.005';
-        slider.value = info.radius.toFixed(3);
         const val = document.createElement('span');
         val.className = 'val';
-        val.textContent = `${info.radius.toFixed(3)}m`;
-        slider.addEventListener('input', () => {
-          const r = parseFloat(slider.value);
-          for (const idx of indices) sim.setColliderRadius(idx, r);
-          val.textContent = `${r.toFixed(3)}m`;
-        });
+        const dn = new DragNumber(val, info.radius, 0.003, 0.001, 3, 0.01, 0.30);
+        dn.onChange = () => { for (const idx of indices) sim.setColliderRadius(idx, dn.get()); };
         row.appendChild(label);
         row.appendChild(val);
-        const sliderRow = document.createElement('div');
-        sliderRow.style.gridColumn = '1 / -1';
-        sliderRow.appendChild(slider);
         collidersList.appendChild(row);
-        collidersList.appendChild(sliderRow);
       }
     }
 
@@ -429,60 +412,32 @@ async function main(): Promise<void> {
             .replace(/^Right/, '');
         const labelText = (mirror && isLeft ? 'L/R ' : '') + short(info.boneName);
 
-        // Width slider
         const wRow = document.createElement('div');
         wRow.className = 'row';
         const wLab = document.createElement('label');
         wLab.textContent = `${labelText} width`;
-        const wSlider = document.createElement('input');
-        wSlider.type = 'range';
-        wSlider.min = '0.02';
-        wSlider.max = '0.5';
-        wSlider.step = '0.005';
-        wSlider.value = info.width.toFixed(3);
         const wVal = document.createElement('span');
         wVal.className = 'val';
-        wVal.textContent = `${info.width.toFixed(3)}m`;
-        wRow.appendChild(wLab);
-        wRow.appendChild(wVal);
-        const wSliderRow = document.createElement('div');
-        wSliderRow.style.gridColumn = '1 / -1';
-        wSliderRow.appendChild(wSlider);
+        const wDN = new DragNumber(wVal, info.width, 0.003, 0.001, 3, 0.02, 0.5);
 
-        // Height slider
         const hRow = document.createElement('div');
         hRow.className = 'row';
         const hLab = document.createElement('label');
         hLab.textContent = `${labelText} height`;
-        const hSlider = document.createElement('input');
-        hSlider.type = 'range';
-        hSlider.min = '0.02';
-        hSlider.max = '0.5';
-        hSlider.step = '0.005';
-        hSlider.value = info.height.toFixed(3);
         const hVal = document.createElement('span');
         hVal.className = 'val';
-        hVal.textContent = `${info.height.toFixed(3)}m`;
+        const hDN = new DragNumber(hVal, info.height, 0.003, 0.001, 3, 0.02, 0.5);
+
+        const applyPlate = () => { for (const idx of indices) sim.setPlateSize(idx, wDN.get(), hDN.get()); };
+        wDN.onChange = applyPlate;
+        hDN.onChange = applyPlate;
+
+        wRow.appendChild(wLab);
+        wRow.appendChild(wVal);
         hRow.appendChild(hLab);
         hRow.appendChild(hVal);
-        const hSliderRow = document.createElement('div');
-        hSliderRow.style.gridColumn = '1 / -1';
-        hSliderRow.appendChild(hSlider);
-
-        const apply = (): void => {
-          const w = parseFloat(wSlider.value);
-          const h = parseFloat(hSlider.value);
-          for (const idx of indices) sim.setPlateSize(idx, w, h);
-          wVal.textContent = `${w.toFixed(3)}m`;
-          hVal.textContent = `${h.toFixed(3)}m`;
-        };
-        wSlider.addEventListener('input', apply);
-        hSlider.addEventListener('input', apply);
-
         platesList.appendChild(wRow);
-        platesList.appendChild(wSliderRow);
         platesList.appendChild(hRow);
-        platesList.appendChild(hSliderRow);
       }
     }
 
@@ -512,27 +467,13 @@ async function main(): Promise<void> {
         row.className = 'row';
         const label = document.createElement('label');
         label.textContent = key.replace(/Cloth_/g, '');
-        const slider = document.createElement('input');
-        slider.type = 'range';
-        slider.min = '0';
-        slider.max = '1';
-        slider.step = '0.05';
-        slider.value = info.stiffness.toFixed(2);
         const val = document.createElement('span');
         val.className = 'val';
-        val.textContent = info.stiffness.toFixed(2);
-        slider.addEventListener('input', () => {
-          const k = parseFloat(slider.value);
-          for (const i of indices) sim.setLateralPairStiffness(i, k);
-          val.textContent = k.toFixed(2);
-        });
+        const dn = new DragNumber(val, info.stiffness, 0.01, 0.002, 2, 0, 1);
+        dn.onChange = () => { for (const i of indices) sim.setLateralPairStiffness(i, dn.get()); };
         row.appendChild(label);
         row.appendChild(val);
-        const sliderRow = document.createElement('div');
-        sliderRow.style.gridColumn = '1 / -1';
-        sliderRow.appendChild(slider);
         pairsList.appendChild(row);
-        pairsList.appendChild(sliderRow);
       }
     }
   }
@@ -547,12 +488,11 @@ async function main(): Promise<void> {
     sim.lateralPairsEnabled = tLateral.checked;
     sim.stickyEnabled = tSticky.checked;
     sim.collisionDampingEnabled = tDamping.checked;
-    sim.stickStrength = parseFloat(stickSlider.value);
+    sim.stickStrength = stickDN.get();
     sim.contactSofteningEnabled = tContactSoft.checked;
-    sim.contactSoftFactor = parseFloat(softFactorSlider.value);
-    sim.contactSoftAttack = parseFloat(softAttackSlider.value);
-    sim.contactSoftRelease = parseFloat(softReleaseSlider.value);
-    // Pendulum toggle: lock all cloth bones to character YZ plane (axis 0 = X).
+    sim.contactSoftFactor = softFactorDN.get();
+    sim.contactSoftAttack = softAttackDN.get();
+    sim.contactSoftRelease = softReleaseDN.get();
     sim.forceClothLockAxisIdx = tPendulum.checked ? 0 : -1;
   };
 
@@ -580,32 +520,15 @@ async function main(): Promise<void> {
   });
   showDebug.addEventListener('change', () => jiggleDebug.setEnabled(showDebug.checked));
   paused.addEventListener('change', () => debugChar.setPaused(paused.checked));
-  speedSlider.addEventListener('input', () => {
-    const r = parseFloat(speedSlider.value);
-    debugChar.setSpeed(r);
-    speedVal.textContent = `${r.toFixed(2)}×`;
-  });
+  speedDN.onChange = () => debugChar.setSpeed(speedDN.get());
 
-  // Wire toggle change events.
   for (const cb of [tColliders, tPlates, tLateral, tSticky, tDamping, tPendulum, tContactSoft]) {
     cb.addEventListener('change', applyToggles);
   }
-  stickSlider.addEventListener('input', () => {
-    stickVal.textContent = parseFloat(stickSlider.value).toFixed(2);
-    applyToggles();
-  });
-  softFactorSlider.addEventListener('input', () => {
-    softFactorVal.textContent = parseFloat(softFactorSlider.value).toFixed(2);
-    applyToggles();
-  });
-  softAttackSlider.addEventListener('input', () => {
-    softAttackVal.textContent = parseFloat(softAttackSlider.value).toFixed(2);
-    applyToggles();
-  });
-  softReleaseSlider.addEventListener('input', () => {
-    softReleaseVal.textContent = parseFloat(softReleaseSlider.value).toFixed(2);
-    applyToggles();
-  });
+  stickDN.onChange = applyToggles;
+  softFactorDN.onChange = applyToggles;
+  softAttackDN.onChange = applyToggles;
+  softReleaseDN.onChange = applyToggles;
 
   // Live stats readout — updates every frame.
   scene.onBeforeRenderObservable.add(() => {

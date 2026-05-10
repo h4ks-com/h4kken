@@ -120,6 +120,7 @@ export interface FighterSnapshot {
 export class Fighter {
   /** Per-arena fight bound. Null = default radial clamp (radius 12). */
   static arenaBounds: ArenaBounds | null = null;
+  static fixedCam: boolean = false;
 
   playerIndex: number;
   scene: Scene;
@@ -823,23 +824,31 @@ export class Fighter {
 
   getRelativeInput(input: InputState): InputState {
     const rel = { ...input };
+    const p2fixed = Fighter.fixedCam && this.playerIndex === 1;
+    const srcLeft = p2fixed ? input.right : input.left;
+    const srcRight = p2fixed ? input.left : input.right;
+    const srcLeftJust = p2fixed ? input.rightJust : input.leftJust;
+    const srcRightJust = p2fixed ? input.leftJust : input.rightJust;
+    const srcDashLeft = p2fixed ? input.dashRight : input.dashLeft;
+    const srcDashRight = p2fixed ? input.dashLeft : input.dashRight;
     if (this.facing > 0) {
-      rel.forward = input.right;
-      rel.back = input.left;
-      rel.forwardJust = input.rightJust;
-      rel.backJust = input.leftJust;
+      rel.forward = srcRight;
+      rel.back = srcLeft;
+      rel.forwardJust = srcRightJust;
+      rel.backJust = srcLeftJust;
+      rel.dashForward = srcDashRight;
+      rel.dashBack = srcDashLeft;
     } else {
-      rel.forward = input.left;
-      rel.back = input.right;
-      rel.forwardJust = input.leftJust;
-      rel.backJust = input.rightJust;
+      rel.forward = srcLeft;
+      rel.back = srcRight;
+      rel.forwardJust = srcLeftJust;
+      rel.backJust = srcRightJust;
+      rel.dashForward = srcDashLeft;
+      rel.dashBack = srcDashRight;
     }
-    if (this.facing > 0) {
-      rel.dashForward = input.dashRight;
-      rel.dashBack = input.dashLeft;
-    } else {
-      rel.dashForward = input.dashLeft;
-      rel.dashBack = input.dashRight;
+    if (Fighter.fixedCam) {
+      rel.sideStepUp = false;
+      rel.sideStepDown = false;
     }
     return rel;
   }

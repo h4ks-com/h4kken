@@ -259,10 +259,14 @@ export class CharSelect {
     this.opponentReady = false;
     this.localReady = false;
     this.opponentName = '';
-    // Seed the vote from the caller — typically the currently loaded arena
-    // (set via URL param or carried over between matches). Without this, the
-    // UI always reset to 'random' which silently overrode an explicit pick.
-    this.arenaVote = initialArenaVote in ARENAS ? initialArenaVote : DEFAULT_ARENA_ID;
+    // Seed from caller only when it's a specific non-default arena (e.g. URL
+    // param or carry-over from a previous match). The very first time through,
+    // currentArenaId is 'default', which we treat as "no explicit pick yet" →
+    // start on RANDOM so players don't inadvertently lock in Mountain Field.
+    this.arenaVote =
+      initialArenaVote && initialArenaVote !== DEFAULT_ARENA_ID && initialArenaVote in ARENAS
+        ? initialArenaVote
+        : 'random';
     this.opponentArenaVote = null;
 
     this.savedCamPos = this.camera.position.clone();

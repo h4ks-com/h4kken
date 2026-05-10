@@ -2,7 +2,7 @@
 // H4KKEN — Arena registry
 // ============================================================
 
-import { Color3 } from '@babylonjs/core';
+import { Color3, Vector3 } from '@babylonjs/core';
 
 export type ArenaBounds =
   | { kind: 'circle'; radius: number }
@@ -21,8 +21,12 @@ export interface ArenaScenery {
   scale?: number;
   /** Offset applied to imported root after scale. */
   position?: { x: number; y: number; z: number };
-  /** Y rotation (radians) for visual orientation. */
+  /** X rotation in radians (pitch). */
+  rotationX?: number;
+  /** Y rotation in radians (yaw). */
   rotationY?: number;
+  /** Z rotation in radians (roll). */
+  rotationZ?: number;
 }
 
 export interface ArenaConfig {
@@ -51,6 +55,21 @@ export interface ArenaConfig {
   /** Fighter movement constraint. Falls back to the default radial clamp
    * (radius 12) when omitted. */
   bounds?: ArenaBounds;
+  /** Extra point lights for enclosed/indoor arenas that the directional sun can't reach. */
+  indoorLights?: Array<{
+    position: { x: number; y: number; z: number };
+    intensity: number;
+    range: number;
+    color?: Color3;
+  }>;
+  /** Override sun direction (normalized). Default is (-0.6, -1.0, -0.5). */
+  sunDirection?: Vector3;
+  /** Extra camera pitch in radians. Positive = higher angle looking down. */
+  cameraPitch?: number;
+  /** Multiplier on ambient light intensity. Default 1.0. */
+  ambientBoost?: number;
+  /** Multiplier on sun light intensity. Default 1.0. */
+  sunBoost?: number;
 }
 
 export const DEFAULT_ARENA_ID = 'default';
@@ -59,28 +78,63 @@ export const ARENAS: Record<string, ArenaConfig> = {
   default: {
     id: 'default',
     name: 'Mountain Field',
-    scenery: {},
-    showDefaultBackdrop: true,
-    showPillars: true,
-    showSky: true,
-  },
-  dojo: {
-    id: 'dojo',
-    name: 'Dojo',
     scenery: {
-      glb: 'assets/arenas/dojo.glb',
-      scale: 2.300,
-      position: { x: 0.00, y: -0.69, z: 0.50 },
-      rotationY: 3.150,
+      glb: 'assets/arenas/default.glb',
+      scale: 1.000,
+      position: { x: 0.00, y: -0.20, z: 0.00 },
+    },
+    showDefaultBackdrop: false,
+    showPillars: false,
+    showSky: true,
+    hideDefaultFloor: true,
+    bounds: { kind: 'circle', radius: 10.00 },
+  },
+  japan_street: {
+    id: 'japan_street',
+    name: 'Japan Street',
+    scenery: {
+      glb: 'assets/arenas/japan_street.glb',
+      scale: 1.000,
+      position: { x: -5.30, y: 0.00, z: -7.60 },
+      rotationY: 1.571,
+    },
+    showDefaultBackdrop: false,
+    showPillars: false,
+    showSky: true,
+    hideDefaultFloor: true,
+    linear: true,
+    fog: { start: 20, end: 55, color: new Color3(0.6, 0.75, 0.9) },
+    bounds: { kind: 'rect', halfWidth: 9.80, halfDepth: 3.70 },
+    sunDirection: new Vector3(0.5, -1.0, 0.6).normalize(),
+    cameraPitch: 20 * Math.PI / 180,
+    ambientBoost: 2.0,
+    sunBoost: 1.5,
+  },
+  warehouse: {
+    id: 'warehouse',
+    name: 'Warehouse',
+    scenery: {
+      glb: 'assets/arenas/warehouse.glb',
+      scale: 2.050,
+      position: { x: -17.00, y: 0.00, z: -75.79 },
+      rotationY: 3.142,
     },
     showDefaultBackdrop: false,
     showPillars: false,
     showSky: false,
-    fog: { start: 60, end: 120, color: new Color3(0.18, 0.14, 0.10) },
-    linear: true,
     hideDefaultFloor: true,
-    clearColor: new Color3(0.06, 0.04, 0.03),
-    bounds: { kind: 'rect', halfWidth: 8.0, halfDepth: 5.0 },
+    linear: true,
+    clearColor: new Color3(0.05, 0.05, 0.06),
+    fog: { start: 20, end: 60, color: new Color3(0.05, 0.05, 0.06) },
+    bounds: { kind: 'rect', halfWidth: 13.50, halfDepth: 13.45 },
+    indoorLights: [
+      { position: { x: -8, y: 8, z: -3 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
+      { position: { x:  8, y: 8, z: -3 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
+      { position: { x: -8, y: 8, z:  7 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
+      { position: { x:  8, y: 8, z:  7 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
+      { position: { x: -8, y: 8, z: 17 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
+      { position: { x:  8, y: 8, z: 17 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
+    ],
   },
   colosseum: {
     id: 'colosseum',
@@ -153,7 +207,8 @@ export const ARENAS: Record<string, ArenaConfig> = {
 /** Pickable arenas in display order — used by character-select. */
 export const ARENA_ORDER: readonly string[] = [
   'default',
-  'dojo',
+  'japan_street',
+  'warehouse',
   'colosseum',
   'temple',
   'hell',

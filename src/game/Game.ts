@@ -288,8 +288,10 @@ export class Game {
     this.stage = new Stage(this.scene, this.currentArenaId);
     this.fightCamera.lockOrbit = !!this.stage.arena.linear;
     this.fightCamera.orbitAngle = -Math.PI / 2;
+    this.fightCamera.pitchOffset = this.stage.arena.cameraPitch ?? 0;
     this.fightCamera.snapOrbit();
     Fighter.arenaBounds = this.stage.arena.bounds ?? null;
+    Fighter.fixedCam = !!this.stage.arena.linear;
 
     const charEntries = Object.values(CHARACTERS);
     let loaded = 0;
@@ -428,8 +430,10 @@ export class Game {
     this.stage = new Stage(this.scene, arenaId);
     this.fightCamera.lockOrbit = !!this.stage.arena.linear;
     this.fightCamera.orbitAngle = -Math.PI / 2;
+    this.fightCamera.pitchOffset = this.stage.arena.cameraPitch ?? 0;
     this.fightCamera.snapOrbit();
     Fighter.arenaBounds = this.stage.arena.bounds ?? null;
+    Fighter.fixedCam = !!this.stage.arena.linear;
     this.charSelect?.setShadowGenerator(this.stage.shadowGenerator);
   }
 
@@ -469,6 +473,7 @@ export class Game {
       }
       return false;
     };
+    this.stage?.shadowGenerator?.dispose();
     for (const mesh of [...this.scene.meshes]) {
       if (!isSpared(mesh)) mesh.dispose(false, true);
     }
@@ -481,6 +486,7 @@ export class Game {
     for (const mat of [...this.scene.materials]) {
       if (mat.getBindedMeshes().length === 0) mat.dispose(true, true);
     }
+    this.scene.resetDrawCache();
   }
 
   prepareMatch() {
@@ -825,6 +831,20 @@ export class Game {
     if (!f1 || !f2) return;
 
     const p2Input = this.botAI.getInput(f2, f1);
+    if (Fighter.fixedCam) {
+      const tmpL = p2Input.left;
+      const tmpR = p2Input.right;
+      const tmpLJ = p2Input.leftJust;
+      const tmpRJ = p2Input.rightJust;
+      const tmpDL = p2Input.dashLeft;
+      const tmpDR = p2Input.dashRight;
+      p2Input.left = tmpR;
+      p2Input.right = tmpL;
+      p2Input.leftJust = tmpRJ;
+      p2Input.rightJust = tmpLJ;
+      p2Input.dashLeft = tmpDR;
+      p2Input.dashRight = tmpDL;
+    }
     this._runSimulationStep(rawInput, p2Input);
   }
 

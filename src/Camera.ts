@@ -23,6 +23,9 @@ export class FightCamera {
    * floating shrine) where the scenery is only modelled from one side. */
   lockOrbit: boolean = false;
 
+  /** Extra camera pitch in radians. Positive = camera looks more downward. */
+  pitchOffset: number = 0;
+
   constructor(camera: FreeCamera) {
     this.camera = camera;
     this.targetPosition = new Vector3(0, 3, -10);
@@ -69,9 +72,9 @@ export class FightCamera {
     const height = this.heightOffset + zoomFactor * 1.5;
 
     this.targetPosition.set(
-      midX + Math.cos(this.orbitAngle) * depth,
-      midY + height,
-      midZ + Math.sin(this.orbitAngle) * depth,
+      midX + Math.cos(this.orbitAngle) * depth * Math.cos(this.pitchOffset),
+      midY + height + Math.sin(this.pitchOffset) * depth,
+      midZ + Math.sin(this.orbitAngle) * depth * Math.cos(this.pitchOffset),
     );
 
     this.targetLookAt.set(midX, midY + this.lookAtHeightOffset, midZ);

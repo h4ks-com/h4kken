@@ -24,28 +24,34 @@
     }
     #panel select:hover, #panel button:hover { background: #333; border-color: #555; }
     .row {
-      display: grid; grid-template-columns: 1fr auto;
-      align-items: center; gap: 4px; margin: 2px 0;
-      padding: 4px 5px; border-radius: 3px;
-      background: rgba(255,255,255,0.04);
+      display: grid; grid-template-columns: auto 1fr;
+      align-items: center; gap: 6px; margin: 2px 0;
     }
-    .row:hover { background: rgba(255,255,255,0.08); }
-    .row label { font-size: 10px; color: #bbb; }
+    .row label { font-size: 10px; color: #bbb; white-space: nowrap; }
     .row .val {
-      font-size: 10px; color: #8cf; min-width: 56px; text-align: right;
+      display: block; font-size: 11px; color: #8cf; text-align: right;
       font-family: monospace; cursor: ew-resize; user-select: none;
-      padding: 1px 4px; border-radius: 2px;
-      background: rgba(90,170,255,0.08);
-      transition: background 0.08s;
+      padding: 4px 8px; border-radius: 3px; box-sizing: border-box;
+      background: rgba(90,170,255,0.13); border: 1px solid rgba(90,170,255,0.22);
+      transition: background 0.08s, border-color 0.08s;
     }
-    .row .val:hover { background: rgba(90,170,255,0.18); }
-    .row .val.dragging { background: rgba(90,170,255,0.3); cursor: ew-resize; }
+    .row .val:hover { background: rgba(90,170,255,0.24); border-color: rgba(90,170,255,0.42); }
+    .row .val.dragging { background: rgba(90,170,255,0.36); border-color: rgba(90,170,255,0.62); }
     .check-row {
       display: flex; align-items: center; gap: 8px;
       margin: 5px 0; cursor: pointer; user-select: none;
     }
     .check-row input[type="checkbox"] { margin: 0; cursor: pointer; accent-color: #5af; }
     .desc { font-size: 9px; color: #777; margin: 1px 0 4px 0; line-height: 1.3; }
+    .snap-btns { display: flex; gap: 2px; margin: 2px 0 6px; }
+    .snap-btn {
+      flex: 1; padding: 3px 0; font-size: 9px; font-family: monospace;
+      background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 2px;
+      color: #777; cursor: pointer; text-align: center;
+      transition: background 0.07s, color 0.07s;
+    }
+    .snap-btn:hover { background: #2a2a2a; color: #ccc; border-color: #555; }
+    .snap-btn.active { background: rgba(90,170,255,0.18); border-color: rgba(90,170,255,0.48); color: #8cf; }
     #panel .help { font-size: 10px; color: #888; margin-top: 10px; line-height: 1.4; }
     #panel button.primary { background: #1a4a2a; border-color: #3a8a5a; color: #8df; }
     #panel button.primary:hover { background: #225533; }
@@ -76,8 +82,35 @@
     <div class="row"><label>Uniform scale</label><span class="val" id="sc-val">1.000</span></div>
 
     <h3>Rotation</h3>
-    <div class="row"><label>Rotation Y (rad)</label><span class="val" id="ry-val">0.000</span></div>
-    <button id="rotate180">Rotate 180°</button>
+    <div class="row"><label>X (°)</label><span class="val" id="rx-val">0.0</span></div>
+    <div class="snap-btns">
+      <button class="snap-btn" data-dn="rx" data-deg="-90">−90</button>
+      <button class="snap-btn" data-dn="rx" data-deg="-45">−45</button>
+      <button class="snap-btn" data-dn="rx" data-deg="0">0</button>
+      <button class="snap-btn" data-dn="rx" data-deg="45">45</button>
+      <button class="snap-btn" data-dn="rx" data-deg="90">90</button>
+      <button class="snap-btn" data-dn="rx" data-deg="180">180</button>
+    </div>
+    <div class="row"><label>Y (°)</label><span class="val" id="ry-val">0.0</span></div>
+    <div class="snap-btns">
+      <button class="snap-btn" data-dn="ry" data-deg="0">0</button>
+      <button class="snap-btn" data-dn="ry" data-deg="45">45</button>
+      <button class="snap-btn" data-dn="ry" data-deg="90">90</button>
+      <button class="snap-btn" data-dn="ry" data-deg="135">135</button>
+      <button class="snap-btn" data-dn="ry" data-deg="180">180</button>
+      <button class="snap-btn" data-dn="ry" data-deg="225">225</button>
+      <button class="snap-btn" data-dn="ry" data-deg="270">270</button>
+      <button class="snap-btn" data-dn="ry" data-deg="315">315</button>
+    </div>
+    <div class="row"><label>Z (°)</label><span class="val" id="rz-val">0.0</span></div>
+    <div class="snap-btns">
+      <button class="snap-btn" data-dn="rz" data-deg="-90">−90</button>
+      <button class="snap-btn" data-dn="rz" data-deg="-45">−45</button>
+      <button class="snap-btn" data-dn="rz" data-deg="0">0</button>
+      <button class="snap-btn" data-dn="rz" data-deg="45">45</button>
+      <button class="snap-btn" data-dn="rz" data-deg="90">90</button>
+      <button class="snap-btn" data-dn="rz" data-deg="180">180</button>
+    </div>
 
     <h3>Bounds <span style="color:#666;font-size:9px;font-weight:normal">(shown in yellow)</span></h3>
     <select id="bounds-type">

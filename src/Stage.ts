@@ -10,6 +10,7 @@ import {
   MeshBuilder,
   PBRMaterial,
   PointLight,
+  Quaternion,
   Scene,
   SceneLoader,
   ShaderMaterial,
@@ -45,8 +46,6 @@ export class Stage {
       this.buildSky();
     }
     if (this.arena.scenery.glb) {
-      // Fire-and-forget — async load. Freeze runs immediately on sync meshes;
-      // the GLB scenery freezes itself in its own callback when loaded.
       void this.loadArenaGlb();
     }
 
@@ -70,6 +69,21 @@ export class Stage {
       this.scene.fogEnd = 90;
     }
 
+    for (let i = 0; i < (this.arena.indoorLights?.length ?? 0); i++) {
+      const l = this.arena.indoorLights![i]!;
+      const light = new PointLight(
+        `indoorLight_${i}`,
+        new Vector3(l.position.x, l.position.y, l.position.z),
+        this.scene,
+      );
+      light.intensity = l.intensity;
+      light.range = l.range;
+      if (l.color) {
+        light.diffuse = l.color;
+        light.specular = l.color;
+      }
+    }
+
     this._freezeStatics();
   }
 
@@ -91,15 +105,16 @@ export class Stage {
   setupLighting() {
     // Low ambient so the directional light provides clear shading and shadow contrast
     const ambient = new HemisphericLight('ambient', new Vector3(0, 1, 0), this.scene);
-    ambient.intensity = 0.25;
+    ambient.intensity = 0.25 * (this.arena.ambientBoost ?? 1.0);
     ambient.diffuse = new Color3(0.8, 0.85, 1.0);
     ambient.groundColor = new Color3(0.15, 0.18, 0.08);
     // No specular from hemisphere — prevents the plastic sheen
     ambient.specular = Color3.Black();
 
-    const sun = new DirectionalLight('sun', new Vector3(-0.6, -1.0, -0.5).normalize(), this.scene);
+    const sunDir = this.arena.sunDirection ?? new Vector3(-0.6, -1.0, -0.5).normalize();
+    const sun = new DirectionalLight('sun', sunDir, this.scene);
     sun.diffuse = new Color3(1.0, 0.96, 0.88);
-    sun.intensity = 1.8;
+    sun.intensity = 1.8 * (this.arena.sunBoost ?? 1.0);
     sun.position = new Vector3(8, 18, 10);
 
     // Mobile: 1024px shadow map + QUALITY_LOW (4× fewer texels, fewer PCF samples).
@@ -111,7 +126,9 @@ export class Stage {
     shadowGen.filteringQuality = mobile
       ? ShadowGenerator.QUALITY_LOW
       : ShadowGenerator.QUALITY_MEDIUM;
-    shadowGen.bias = 0.0008;
+    shadowGen.bias = 0.002;
+    shadowGen.normalBias = 0.08;
+    shadowGen.forceBackFacesOnly = true;
 
     this._shadowGen = shadowGen;
   }
@@ -412,9 +429,9 @@ export class Stage {
       if (scenery.position) {
         root.position.set(scenery.position.x, scenery.position.y, scenery.position.z);
       }
-      if (scenery.rotationY !== undefined) {
-        root.rotation.y = scenery.rotationY;
-      }
+      root.rotationQuaternion = Quaternion.RotationAxis(new Vector3(0, 0, 1), scenery.rotationZ ?? 0)
+        .multiply(Quaternion.RotationAxis(new Vector3(0, 1, 0), scenery.rotationY ?? 0))
+        .multiply(Quaternion.RotationAxis(new Vector3(1, 0, 0), scenery.rotationX ?? 0));
 
       for (const m of result.meshes) {
         if (m.parent === null) m.parent = root;

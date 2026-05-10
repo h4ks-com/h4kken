@@ -15,12 +15,19 @@
       overflow-y: auto; z-index: 10; backdrop-filter: blur(4px);
     }
     #panel .row {
-      display: grid; grid-template-columns: 1fr auto; gap: 6px;
+      display: grid; grid-template-columns: auto 1fr; gap: 6px;
       align-items: center; margin: 3px 0; font-family: monospace;
     }
-    #panel .row label { display: block; font-size: 10px; color: #ccc; }
-    #panel .row input[type="range"] { width: 100%; }
-    #panel .row .val { font-size: 10px; color: #8cf; min-width: 44px; text-align: right; }
+    #panel .row label { display: block; font-size: 10px; color: #ccc; white-space: nowrap; }
+    #panel .row .val {
+      display: block; font-size: 11px; color: #8cf; text-align: right;
+      font-family: monospace; cursor: ew-resize; user-select: none;
+      padding: 4px 8px; border-radius: 3px; box-sizing: border-box;
+      background: rgba(90,170,255,0.13); border: 1px solid rgba(90,170,255,0.22);
+      transition: background 0.08s, border-color 0.08s;
+    }
+    #panel .row .val:hover { background: rgba(90,170,255,0.24); border-color: rgba(90,170,255,0.42); }
+    #panel .row .val.dragging { background: rgba(90,170,255,0.36); border-color: rgba(90,170,255,0.62); }
     #panel .empty { color: #666; font-size: 10px; font-style: italic; padding: 4px 0; }
     #panel h3 { margin: 8px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #888; }
     #panel h3:first-child { margin-top: 0; }
@@ -55,10 +62,7 @@
     <label><input type="checkbox" id="paused"> Pause animation</label>
     <div class="row">
       <label>Speed</label>
-      <span class="val" id="speed-val">1.00×</span>
-    </div>
-    <div style="grid-column: 1 / -1;">
-      <input type="range" id="speed" min="0.05" max="2" step="0.05" value="1" style="width: 100%;">
+      <span class="val" id="speed-val">1.00</span>
     </div>
     <button id="reset-cam">Reset Camera</button>
     <h3>Physics features <span style="color:#888;font-size:10px;font-weight:normal">(toggle to isolate)</span></h3>
@@ -73,29 +77,17 @@
       <label>Stick strength</label>
       <span class="val" id="stick-val">0.60</span>
     </div>
-    <div style="grid-column: 1 / -1;">
-      <input type="range" id="stick" min="0" max="1" step="0.05" value="0.6" style="width: 100%;">
-    </div>
     <div class="row">
       <label>Soft factor (0=rigid · 1=full give)</label>
       <span class="val" id="soft-factor-val">0.85</span>
-    </div>
-    <div style="grid-column: 1 / -1;">
-      <input type="range" id="soft-factor" min="0" max="1" step="0.05" value="0.85" style="width: 100%;">
     </div>
     <div class="row">
       <label>Soft attack (ramp-up on contact)</label>
       <span class="val" id="soft-attack-val">0.40</span>
     </div>
-    <div style="grid-column: 1 / -1;">
-      <input type="range" id="soft-attack" min="0.05" max="1" step="0.05" value="0.4" style="width: 100%;">
-    </div>
     <div class="row">
       <label>Soft release (decay when free)</label>
       <span class="val" id="soft-release-val">0.08</span>
-    </div>
-    <div style="grid-column: 1 / -1;">
-      <input type="range" id="soft-release" min="0.01" max="0.5" step="0.01" value="0.08" style="width: 100%;">
     </div>
     <h3>Live stats</h3>
     <pre id="live-stats" style="font-size:10px;color:#8cf;font-family:monospace;margin:0;line-height:1.4;background:#111;padding:6px;border-radius:3px;"></pre>
