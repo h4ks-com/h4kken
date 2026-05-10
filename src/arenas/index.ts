@@ -80,8 +80,8 @@ export const ARENAS: Record<string, ArenaConfig> = {
     name: 'Mountain Field',
     scenery: {
       glb: 'assets/arenas/default.glb',
-      scale: Math.LOG2E,
-      position: { x: 0.0, y: -0.2, z: 0.0 },
+      scale: 1.443,
+      position: { x: 0.0, y: -0.25, z: 0.0 },
     },
     showDefaultBackdrop: false,
     showPillars: false,
