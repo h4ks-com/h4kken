@@ -162,11 +162,51 @@ async function main(): Promise<void> {
   const tPendulum = document.getElementById('t-pendulum') as HTMLInputElement;
   const tContactSoft = document.getElementById('t-contact-soft') as HTMLInputElement;
 
-  const speedDN       = new DragNumber(document.getElementById('speed-val')!,       1.00, 0.02,  0.005, 2, 0.05, 2.0);
-  const stickDN       = new DragNumber(document.getElementById('stick-val')!,       0.60, 0.01,  0.002, 2, 0,    1.0);
-  const softFactorDN  = new DragNumber(document.getElementById('soft-factor-val')!, 0.85, 0.01,  0.002, 2, 0,    1.0);
-  const softAttackDN  = new DragNumber(document.getElementById('soft-attack-val')!, 0.40, 0.01,  0.002, 2, 0.05, 1.0);
-  const softReleaseDN = new DragNumber(document.getElementById('soft-release-val')!,0.08, 0.005, 0.001, 3, 0.01, 0.5);
+  const speedDN = new DragNumber(
+    document.getElementById('speed-val') as HTMLElement,
+    1.0,
+    0.02,
+    0.005,
+    2,
+    0.05,
+    2.0,
+  );
+  const stickDN = new DragNumber(
+    document.getElementById('stick-val') as HTMLElement,
+    0.6,
+    0.01,
+    0.002,
+    2,
+    0,
+    1.0,
+  );
+  const softFactorDN = new DragNumber(
+    document.getElementById('soft-factor-val') as HTMLElement,
+    0.85,
+    0.01,
+    0.002,
+    2,
+    0,
+    1.0,
+  );
+  const softAttackDN = new DragNumber(
+    document.getElementById('soft-attack-val') as HTMLElement,
+    0.4,
+    0.01,
+    0.002,
+    2,
+    0.05,
+    1.0,
+  );
+  const softReleaseDN = new DragNumber(
+    document.getElementById('soft-release-val') as HTMLElement,
+    0.08,
+    0.005,
+    0.001,
+    3,
+    0.01,
+    0.5,
+  );
   const liveStats = document.getElementById('live-stats') as HTMLPreElement;
   const collidersList = document.getElementById('colliders-list') as HTMLDivElement;
   const collidersCount = document.getElementById('colliders-count') as HTMLSpanElement;
@@ -229,11 +269,10 @@ async function main(): Promise<void> {
   // Pre-load all character assets up front so swapping is instant.
   const assetsByChar = new Map<string, SharedAssets>();
   const charIds = Object.keys(CHARACTERS);
-  for (let i = 0; i < charIds.length; i++) {
-    const id = charIds[i]!;
-    status.textContent = `loading ${id} (${i + 1}/${charIds.length})...`;
+  for (const id of charIds) {
+    status.textContent = `loading ${id} (${charIds.indexOf(id) + 1}/${charIds.length})...`;
     const assets = await FighterClass.loadAssets(scene, id);
-    const meta = CHARACTERS[id]!;
+    const meta = CHARACTERS[id] as (typeof CHARACTERS)[string];
     assets.scale = meta.scale;
     assets.jiggle = meta.jiggle;
     assets.glowEmissive = meta.glowEmissive;
@@ -279,7 +318,7 @@ async function main(): Promise<void> {
     if (want) animSelect.value = want;
   }
 
-  /** Build the live collider + lateral-pair tuning UI for the active character. */
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: debug tuning UI
   function rebuildTuningUI(): void {
     collidersList.innerHTML = '';
     pairsList.innerHTML = '';
@@ -345,12 +384,14 @@ async function main(): Promise<void> {
             .replace(/^Left/, '')
             .replace(/^Right/, '');
         const label = document.createElement('label');
-        const baseName = `${short(info.boneName)}${info.toBoneName ? '→' + short(info.toBoneName) : ''}`;
+        const baseName = `${short(info.boneName)}${info.toBoneName ? `→${short(info.toBoneName)}` : ''}`;
         label.textContent = partner !== undefined ? `L/R ${baseName}` : baseName;
         const val = document.createElement('span');
         val.className = 'val';
-        const dn = new DragNumber(val, info.radius, 0.003, 0.001, 3, 0.01, 0.30);
-        dn.onChange = () => { for (const idx of indices) sim.setColliderRadius(idx, dn.get()); };
+        const dn = new DragNumber(val, info.radius, 0.003, 0.001, 3, 0.01, 0.3);
+        dn.onChange = () => {
+          for (const idx of indices) sim.setColliderRadius(idx, dn.get());
+        };
         row.appendChild(label);
         row.appendChild(val);
         collidersList.appendChild(row);
@@ -428,7 +469,9 @@ async function main(): Promise<void> {
         hVal.className = 'val';
         const hDN = new DragNumber(hVal, info.height, 0.003, 0.001, 3, 0.02, 0.5);
 
-        const applyPlate = () => { for (const idx of indices) sim.setPlateSize(idx, wDN.get(), hDN.get()); };
+        const applyPlate = () => {
+          for (const idx of indices) sim.setPlateSize(idx, wDN.get(), hDN.get());
+        };
         wDN.onChange = applyPlate;
         hDN.onChange = applyPlate;
 
@@ -458,11 +501,13 @@ async function main(): Promise<void> {
         const bChain = info.bBoneName.replace(/_\d+$/, '');
         const key = `${aChain}↔${bChain}`;
         if (!groups.has(key)) groups.set(key, []);
-        groups.get(key)!.push(i);
+        groups.get(key)?.push(i);
       }
       for (const [key, indices] of groups) {
-        const firstIdx = indices[0]!;
-        const info = sim.getLateralPairInfo(firstIdx)!;
+        const firstIdx = indices[0] as number;
+        const info = sim.getLateralPairInfo(firstIdx) as NonNullable<
+          ReturnType<typeof sim.getLateralPairInfo>
+        >;
         const row = document.createElement('div');
         row.className = 'row';
         const label = document.createElement('label');
@@ -470,7 +515,9 @@ async function main(): Promise<void> {
         const val = document.createElement('span');
         val.className = 'val';
         const dn = new DragNumber(val, info.stiffness, 0.01, 0.002, 2, 0, 1);
-        dn.onChange = () => { for (const i of indices) sim.setLateralPairStiffness(i, dn.get()); };
+        dn.onChange = () => {
+          for (const i of indices) sim.setLateralPairStiffness(i, dn.get());
+        };
         row.appendChild(label);
         row.appendChild(val);
         pairsList.appendChild(row);
@@ -543,6 +590,7 @@ async function main(): Promise<void> {
       `worst speed: ${(s.worstBoneSpeed * 1000).toFixed(2)} mm/frame`;
   });
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: config export
   copyConfig.addEventListener('click', () => {
     const sim = debugChar.jiggleSim;
     if (!sim) return;
@@ -577,8 +625,9 @@ async function main(): Promise<void> {
       lines.push('jiggleLateralPairs: [');
       for (const [key, firstIdx] of groups) {
         const [a, b] = key.split('|') as [string, string];
-        const info = sim.getLateralPairInfo(firstIdx)!;
-        // Count how many bones share this chain-pair (= chain length).
+        const info = sim.getLateralPairInfo(firstIdx) as NonNullable<
+          ReturnType<typeof sim.getLateralPairInfo>
+        >;
         let count = 0;
         for (let i = 0; i < sim.lateralPairCount; i++) {
           const inf = sim.getLateralPairInfo(i);

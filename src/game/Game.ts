@@ -380,27 +380,27 @@ export class Game {
     this.charSelect?.show(
       mode,
       {
-      onConfirm: (p1Id, p2Id, arenaId) => this._onCharSelectConfirm(p1Id, p2Id, arenaId),
-      onPick: (charId) => {
-        this._pendingCharId = charId;
-        this.network.sendPick(charId);
-      },
-      onArenaPick: (arenaId) => {
-        this.network.sendArenaPick(arenaId);
-      },
-      onArenaPreview: (arenaId) => {
-        this.setArena(arenaId);
-      },
-      onReady: () => {
-        this.network.sendReady();
-      },
-      onBack: () => {
-        if (mode === 'online') this.network.leave();
-        this.charSelect?.hide();
-        for (const f of this.fighters) f?.rootNode?.setEnabled(true);
-        this.state = GAME_STATE.MENU;
-        this.ui.showScreen('menu-screen');
-      },
+        onConfirm: (p1Id, p2Id, arenaId) => this._onCharSelectConfirm(p1Id, p2Id, arenaId),
+        onPick: (charId) => {
+          this._pendingCharId = charId;
+          this.network.sendPick(charId);
+        },
+        onArenaPick: (arenaId) => {
+          this.network.sendArenaPick(arenaId);
+        },
+        onArenaPreview: (arenaId) => {
+          this.setArena(arenaId);
+        },
+        onReady: () => {
+          this.network.sendReady();
+        },
+        onBack: () => {
+          if (mode === 'online') this.network.leave();
+          this.charSelect?.hide();
+          for (const f of this.fighters) f?.rootNode?.setEnabled(true);
+          this.state = GAME_STATE.MENU;
+          this.ui.showScreen('menu-screen');
+        },
       },
       this.currentArenaId,
     );

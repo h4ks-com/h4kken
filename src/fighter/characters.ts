@@ -220,7 +220,7 @@ export const CHARACTERS: Record<string, CharacterMeta> = {
       plateColliders: [
         ...chainPlates(['Cloth_Front_L', 'Cloth_Front_C', 'Cloth_Front_R'], 5, {
           width: 0.085,
-          height: 0.10,
+          height: 0.1,
           normal: [0, 0, 1],
         }),
         ...chainPlates(['Cloth_Back_L', 'Cloth_Back_C', 'Cloth_Back_R'], 5, {

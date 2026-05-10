@@ -13,7 +13,7 @@ import {
   Engine,
   HemisphericLight,
   type LinesMesh,
-  Mesh,
+  type Mesh,
   MeshBuilder,
   PointLight,
   Quaternion,
@@ -25,9 +25,9 @@ import {
   TransformNode,
   Vector3,
 } from '@babylonjs/core';
-import { type ArenaBounds, ARENA_ORDER, ARENAS } from './arenas';
-import { CHARACTERS } from './fighter/characters';
+import { ARENA_ORDER, ARENAS } from './arenas';
 import { DragNumber } from './DragNumber';
+import { CHARACTERS } from './fighter/characters';
 import {
   buildBoneMap,
   cloneAndPrepareSkeleton,
@@ -66,9 +66,7 @@ class PlacementFighter {
       this.meshes.push(m);
     }
 
-    const idleKey = Object.keys(assets.animGroups).find((k) =>
-      k.toLowerCase().includes('idle'),
-    );
+    const idleKey = Object.keys(assets.animGroups).find((k) => k.toLowerCase().includes('idle'));
     const srcAg = idleKey ? assets.animGroups[idleKey] : Object.values(assets.animGroups)[0];
     if (srcAg) {
       this.animGroup = srcAg.clone('pf_anim', (t) => remapAnimationTarget(t, boneByName));
@@ -92,8 +90,8 @@ function buildDebugSky(
   scene: Scene,
   colors?: { top: Color3; horiz: Color3; bottom: Color3 },
 ): Mesh {
-  if (!Effect.ShadersStore['skyVertexShader']) {
-    Effect.ShadersStore['skyVertexShader'] = `
+  if (!Effect.ShadersStore.skyVertexShader) {
+    Effect.ShadersStore.skyVertexShader = `
       precision highp float;
       attribute vec3 position;
       uniform mat4 worldViewProjection;
@@ -103,7 +101,7 @@ function buildDebugSky(
         gl_Position = worldViewProjection * vec4(position, 1.0);
       }
     `;
-    Effect.ShadersStore['skyFragmentShader'] = `
+    Effect.ShadersStore.skyFragmentShader = `
       precision highp float;
       uniform vec3 topColor;
       uniform vec3 horizColor;
@@ -123,11 +121,16 @@ function buildDebugSky(
   }
   const sky = MeshBuilder.CreateSphere('debugSky', { diameter: 180, segments: 16 }, scene);
   const skyMat = new ShaderMaterial(
-    'debugSkyMat', scene, { vertex: 'sky', fragment: 'sky' },
-    { attributes: ['position'], uniforms: ['worldViewProjection', 'topColor', 'horizColor', 'bottomColor'] },
+    'debugSkyMat',
+    scene,
+    { vertex: 'sky', fragment: 'sky' },
+    {
+      attributes: ['position'],
+      uniforms: ['worldViewProjection', 'topColor', 'horizColor', 'bottomColor'],
+    },
   );
-  skyMat.setColor3('topColor',   colors?.top   ?? new Color3(0.2, 0.533, 0.8));
-  skyMat.setColor3('horizColor', colors?.horiz ?? new Color3(0.6, 0.8,   0.933));
+  skyMat.setColor3('topColor', colors?.top ?? new Color3(0.2, 0.533, 0.8));
+  skyMat.setColor3('horizColor', colors?.horiz ?? new Color3(0.6, 0.8, 0.933));
   skyMat.setColor3('bottomColor', colors?.bottom ?? new Color3(0.533, 0.667, 0.467));
   skyMat.backFaceCulling = false;
   sky.material = skyMat;
@@ -160,7 +163,7 @@ function buildRectPoints(hw: number, hd: number): Vector3[] {
   ];
 }
 
-function wrapAngle(a: number): number {
+function _wrapAngle(a: number): number {
   while (a > Math.PI) a -= Math.PI * 2;
   while (a < -Math.PI) a += Math.PI * 2;
   return a;
@@ -176,13 +179,41 @@ async function main(): Promise<void> {
   const pxDN = new DragNumber(document.getElementById('px-val') as HTMLElement, 0, 0.1, 0.005, 2);
   const pyDN = new DragNumber(document.getElementById('py-val') as HTMLElement, 0, 0.1, 0.005, 2);
   const pzDN = new DragNumber(document.getElementById('pz-val') as HTMLElement, 0, 0.1, 0.005, 2);
-  const scDN = new DragNumber(document.getElementById('sc-val') as HTMLElement, 1, 0.03, 0.001, 3, 0.001);
+  const scDN = new DragNumber(
+    document.getElementById('sc-val') as HTMLElement,
+    1,
+    0.03,
+    0.001,
+    3,
+    0.001,
+  );
   const rxDN = new DragNumber(document.getElementById('rx-val') as HTMLElement, 0, 1, 0.1, 1);
   const ryDN = new DragNumber(document.getElementById('ry-val') as HTMLElement, 0, 1, 0.1, 1);
   const rzDN = new DragNumber(document.getElementById('rz-val') as HTMLElement, 0, 1, 0.1, 1);
-  const brDN = new DragNumber(document.getElementById('br-val') as HTMLElement, 8, 0.15, 0.01, 2, 0.5);
-  const bhwDN = new DragNumber(document.getElementById('bhw-val') as HTMLElement, 6, 0.15, 0.01, 2, 0.5);
-  const bhdDN = new DragNumber(document.getElementById('bhd-val') as HTMLElement, 4, 0.15, 0.01, 2, 0.5);
+  const brDN = new DragNumber(
+    document.getElementById('br-val') as HTMLElement,
+    8,
+    0.15,
+    0.01,
+    2,
+    0.5,
+  );
+  const bhwDN = new DragNumber(
+    document.getElementById('bhw-val') as HTMLElement,
+    6,
+    0.15,
+    0.01,
+    2,
+    0.5,
+  );
+  const bhdDN = new DragNumber(
+    document.getElementById('bhd-val') as HTMLElement,
+    4,
+    0.15,
+    0.01,
+    2,
+    0.5,
+  );
 
   const boundsTypeSelect = document.getElementById('bounds-type') as HTMLSelectElement;
   const boundsCircleSection = document.getElementById('bounds-circle-section') as HTMLDivElement;
@@ -233,7 +264,12 @@ async function main(): Promise<void> {
   fightLine.position.set(0, 0.002, 0);
 
   const camera = new ArcRotateCamera(
-    'cam', GAME_CAM_ALPHA, GAME_CAM_BETA, GAME_CAM_RADIUS, GAME_CAM_TARGET.clone(), scene,
+    'cam',
+    GAME_CAM_ALPHA,
+    GAME_CAM_BETA,
+    GAME_CAM_RADIUS,
+    GAME_CAM_TARGET.clone(),
+    scene,
   );
   camera.attachControl(canvas, true);
   camera.minZ = 0.05;
@@ -260,7 +296,9 @@ async function main(): Promise<void> {
     const type = boundsTypeSelect.value as 'circle' | 'rect';
     if (type === 'circle') {
       boundsViz = MeshBuilder.CreateLines(
-        'boundsViz', { points: buildCirclePoints(brDN.get()) }, scene,
+        'boundsViz',
+        { points: buildCirclePoints(brDN.get()) },
+        scene,
       );
     } else {
       boundsViz = MeshBuilder.CreateLines(
@@ -279,7 +317,7 @@ async function main(): Promise<void> {
   const p2Id = charIds[1] ?? p1Id;
   status.textContent = `loading ${p1Id}…`;
   const p1Assets = await FighterClass.loadAssets(scene, p1Id);
-  const p1Meta = CHARACTERS[p1Id]!;
+  const p1Meta = CHARACTERS[p1Id] as (typeof CHARACTERS)[string];
   p1Assets.scale = p1Meta.scale;
   p1Assets.jiggle = p1Meta.jiggle;
 
@@ -287,7 +325,7 @@ async function main(): Promise<void> {
   if (p2Id !== p1Id) {
     status.textContent = `loading ${p2Id}…`;
     p2Assets = await FighterClass.loadAssets(scene, p2Id);
-    const p2Meta = CHARACTERS[p2Id]!;
+    const p2Meta = CHARACTERS[p2Id] as (typeof CHARACTERS)[string];
     p2Assets.scale = p2Meta.scale;
     p2Assets.jiggle = p2Meta.jiggle;
   } else {
@@ -315,6 +353,7 @@ async function main(): Promise<void> {
     scene.clearColor = DEFAULT_CLEAR.clone();
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: debug arena loader
   async function loadArena(id: string): Promise<void> {
     if (arenaRoot) {
       const prev = arenaRoot;
@@ -355,30 +394,36 @@ async function main(): Promise<void> {
     const dir = lastSlash >= 0 ? glb.substring(0, lastSlash + 1) : '';
     const file = lastSlash >= 0 ? glb.substring(lastSlash + 1) : glb;
     try {
-      const result = await SceneLoader.ImportMeshAsync(null, '/' + dir, file, scene);
+      const result = await SceneLoader.ImportMeshAsync(null, `/${dir}`, file, scene);
       for (const m of result.meshes) {
         if (m.parent === null) m.parent = arenaRoot;
         m.receiveShadows = true;
       }
 
       // Indoor lights: add PointLights + yellow marker spheres
-      for (let i = 0; i < (cfg.indoorLights?.length ?? 0); i++) {
-        const l = cfg.indoorLights![i]!;
-        const pos = new Vector3(l.position.x, l.position.y, l.position.z);
+      const lights = cfg.indoorLights;
+      if (lights) {
+        for (let i = 0; i < lights.length; i++) {
+          const l = lights[i] as (typeof lights)[number];
+          const pos = new Vector3(l.position.x, l.position.y, l.position.z);
 
-        const pl = new PointLight(`dbgLight_${i}`, pos, scene);
-        pl.intensity = l.intensity;
-        pl.range = l.range;
-        if (l.color) { pl.diffuse = l.color; pl.specular = l.color; }
-        debugPointLights.push(pl);
+          const pl = new PointLight(`dbgLight_${i}`, pos, scene);
+          pl.intensity = l.intensity;
+          pl.range = l.range;
+          if (l.color) {
+            pl.diffuse = l.color;
+            pl.specular = l.color;
+          }
+          debugPointLights.push(pl);
 
-        const marker = MeshBuilder.CreateSphere(`dbgLightMarker_${i}`, { diameter: 0.3 }, scene);
-        marker.position.copyFrom(pos);
-        const mat = new StandardMaterial(`dbgLightMarkerMat_${i}`, scene);
-        mat.emissiveColor = l.color ?? new Color3(1, 1, 0.4);
-        mat.disableLighting = true;
-        marker.material = mat;
-        debugLightMeshes.push(marker);
+          const marker = MeshBuilder.CreateSphere(`dbgLightMarker_${i}`, { diameter: 0.3 }, scene);
+          marker.position.copyFrom(pos);
+          const mat = new StandardMaterial(`dbgLightMarkerMat_${i}`, scene);
+          mat.emissiveColor = l.color ?? new Color3(1, 1, 0.4);
+          mat.disableLighting = true;
+          marker.material = mat;
+          debugLightMeshes.push(marker);
+        }
       }
 
       status.textContent = `${cfg.name} loaded`;
@@ -395,10 +440,9 @@ async function main(): Promise<void> {
     arenaRoot.position.set(pxDN.get(), pyDN.get(), pzDN.get());
     arenaRoot.scaling.setAll(scDN.get());
     // XYZ extrinsic (each slider = independent world axis, no gimbal lock)
-    arenaRoot.rotationQuaternion =
-      Quaternion.RotationAxis(new Vector3(0, 0, 1), rzDN.get() * DEG)
-        .multiply(Quaternion.RotationAxis(new Vector3(0, 1, 0), ryDN.get() * DEG))
-        .multiply(Quaternion.RotationAxis(new Vector3(1, 0, 0), rxDN.get() * DEG));
+    arenaRoot.rotationQuaternion = Quaternion.RotationAxis(new Vector3(0, 0, 1), rzDN.get() * DEG)
+      .multiply(Quaternion.RotationAxis(new Vector3(0, 1, 0), ryDN.get() * DEG))
+      .multiply(Quaternion.RotationAxis(new Vector3(1, 0, 0), rxDN.get() * DEG));
   }
 
   function updateSnapHighlights(): void {
@@ -444,7 +488,10 @@ async function main(): Promise<void> {
 
   // Wire transform drag numbers
   for (const dn of [pxDN, pyDN, pzDN, scDN, rxDN, ryDN, rzDN]) {
-    dn.onChange = () => { applyTransform(); updateSnapHighlights(); };
+    dn.onChange = () => {
+      applyTransform();
+      updateSnapHighlights();
+    };
   }
 
   // Snap buttons
@@ -540,8 +587,12 @@ async function main(): Promise<void> {
     output.style.display = 'block';
 
     navigator.clipboard.writeText(text).then(
-      () => { status.textContent = 'copied — paste into src/arenas/index.ts'; },
-      () => { status.textContent = 'copy failed — see output box below'; },
+      () => {
+        status.textContent = 'copied — paste into src/arenas/index.ts';
+      },
+      () => {
+        status.textContent = 'copy failed — see output box below';
+      },
     );
   });
 

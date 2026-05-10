@@ -19,7 +19,9 @@ export class DragNumber {
     this._bind();
   }
 
-  get(): number { return this._value; }
+  get(): number {
+    return this._value;
+  }
 
   set(v: number): void {
     this._value = Math.max(this.min, Math.min(this.max, v));
@@ -91,13 +93,15 @@ export class DragNumber {
 
     const commit = () => {
       const v = parseFloat(inp.value);
-      if (!isNaN(v)) this.set(v);
+      if (!Number.isNaN(v)) this.set(v);
       this.onChange();
       inp.remove();
     };
     inp.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-      else if (ev.key === 'Escape') inp.remove();
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        commit();
+      } else if (ev.key === 'Escape') inp.remove();
       ev.stopPropagation();
     });
     inp.addEventListener('blur', commit);

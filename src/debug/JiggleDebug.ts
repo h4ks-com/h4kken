@@ -97,7 +97,7 @@ export class JiggleDebug {
     tube.scaling.set(radius * 2, len, radius * 2);
   }
 
-  /** Call every render frame — refreshes bone segment + collider positions. */
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: debug visualizer
   update(): void {
     if (!this._enabled) return;
     const fighters = this._getFighters();

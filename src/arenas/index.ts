@@ -80,22 +80,22 @@ export const ARENAS: Record<string, ArenaConfig> = {
     name: 'Mountain Field',
     scenery: {
       glb: 'assets/arenas/default.glb',
-      scale: 1.000,
-      position: { x: 0.00, y: -0.20, z: 0.00 },
+      scale: Math.LOG2E,
+      position: { x: 0.0, y: -0.2, z: 0.0 },
     },
     showDefaultBackdrop: false,
     showPillars: false,
     showSky: true,
     hideDefaultFloor: true,
-    bounds: { kind: 'circle', radius: 10.00 },
+    bounds: { kind: 'circle', radius: 10.0 },
   },
   japan_street: {
     id: 'japan_street',
     name: 'Japan Street',
     scenery: {
       glb: 'assets/arenas/japan_street.glb',
-      scale: 1.000,
-      position: { x: -5.30, y: 0.00, z: -7.60 },
+      scale: Math.LOG2E,
+      position: { x: -5.3, y: 0.0, z: -7.6 },
       rotationY: 1.571,
     },
     showDefaultBackdrop: false,
@@ -104,9 +104,9 @@ export const ARENAS: Record<string, ArenaConfig> = {
     hideDefaultFloor: true,
     linear: true,
     fog: { start: 20, end: 55, color: new Color3(0.6, 0.75, 0.9) },
-    bounds: { kind: 'rect', halfWidth: 9.80, halfDepth: 3.70 },
+    bounds: { kind: 'rect', halfWidth: 9.8, halfDepth: 3.7 },
     sunDirection: new Vector3(0.5, -1.0, 0.6).normalize(),
-    cameraPitch: 20 * Math.PI / 180,
+    cameraPitch: (20 * Math.PI) / 180,
     ambientBoost: 2.0,
     sunBoost: 1.5,
   },
@@ -115,9 +115,9 @@ export const ARENAS: Record<string, ArenaConfig> = {
     name: 'Warehouse',
     scenery: {
       glb: 'assets/arenas/warehouse.glb',
-      scale: 2.050,
-      position: { x: -17.00, y: 0.00, z: -75.79 },
-      rotationY: 3.142,
+      scale: 2.05,
+      position: { x: -17.0, y: 0.0, z: -75.79 },
+      rotationY: Math.PI,
     },
     showDefaultBackdrop: false,
     showPillars: false,
@@ -126,14 +126,44 @@ export const ARENAS: Record<string, ArenaConfig> = {
     linear: true,
     clearColor: new Color3(0.05, 0.05, 0.06),
     fog: { start: 20, end: 60, color: new Color3(0.05, 0.05, 0.06) },
-    bounds: { kind: 'rect', halfWidth: 13.50, halfDepth: 13.45 },
+    bounds: { kind: 'rect', halfWidth: 13.5, halfDepth: 13.45 },
     indoorLights: [
-      { position: { x: -8, y: 8, z: -3 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
-      { position: { x:  8, y: 8, z: -3 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
-      { position: { x: -8, y: 8, z:  7 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
-      { position: { x:  8, y: 8, z:  7 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
-      { position: { x: -8, y: 8, z: 17 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
-      { position: { x:  8, y: 8, z: 17 }, intensity: 80.0, range: 80, color: new Color3(1.0, 0.92, 0.78) },
+      {
+        position: { x: -8, y: 8, z: -3 },
+        intensity: 80.0,
+        range: 80,
+        color: new Color3(1.0, 0.92, 0.78),
+      },
+      {
+        position: { x: 8, y: 8, z: -3 },
+        intensity: 80.0,
+        range: 80,
+        color: new Color3(1.0, 0.92, 0.78),
+      },
+      {
+        position: { x: -8, y: 8, z: 7 },
+        intensity: 80.0,
+        range: 80,
+        color: new Color3(1.0, 0.92, 0.78),
+      },
+      {
+        position: { x: 8, y: 8, z: 7 },
+        intensity: 80.0,
+        range: 80,
+        color: new Color3(1.0, 0.92, 0.78),
+      },
+      {
+        position: { x: -8, y: 8, z: 17 },
+        intensity: 80.0,
+        range: 80,
+        color: new Color3(1.0, 0.92, 0.78),
+      },
+      {
+        position: { x: 8, y: 8, z: 17 },
+        intensity: 80.0,
+        range: 80,
+        color: new Color3(1.0, 0.92, 0.78),
+      },
     ],
   },
   colosseum: {
@@ -141,8 +171,8 @@ export const ARENAS: Record<string, ArenaConfig> = {
     name: 'Colosseum',
     scenery: {
       glb: 'assets/arenas/colosseum.glb',
-      scale: 5.000,
-      position: { x: 0.00, y: -0.09, z: 0.00 },
+      scale: 5.0,
+      position: { x: 0.0, y: -0.09, z: 0.0 },
     },
     showDefaultBackdrop: false,
     showPillars: false,
@@ -161,9 +191,9 @@ export const ARENAS: Record<string, ArenaConfig> = {
     name: 'Sunrise Temple',
     scenery: {
       glb: 'assets/arenas/temple.glb',
-      scale: 1.980,
-      position: { x: -2.00, y: -3.15, z: 29.10 },
-      rotationY: 3.142,
+      scale: 1.98,
+      position: { x: -2.0, y: -3.15, z: 29.1 },
+      rotationY: Math.PI,
     },
     showDefaultBackdrop: false,
     showPillars: false,
@@ -171,20 +201,20 @@ export const ARENAS: Record<string, ArenaConfig> = {
     skyColors: {
       top: new Color3(0.28, 0.32, 0.55),
       horiz: new Color3(0.95, 0.55, 0.35),
-      bottom: new Color3(0.30, 0.20, 0.18),
+      bottom: new Color3(0.3, 0.2, 0.18),
     },
     fog: { start: 50, end: 110, color: new Color3(0.6, 0.4, 0.35) },
     linear: true,
     hideDefaultFloor: true,
-    bounds: { kind: 'rect', halfWidth: 10.85, halfDepth: 7.90 },
+    bounds: { kind: 'rect', halfWidth: 10.85, halfDepth: 7.9 },
   },
   hell: {
     id: 'hell',
     name: 'Hell Arena',
     scenery: {
       glb: 'assets/arenas/hell.glb',
-      scale: 16.660,
-      position: { x: 0.00, y: -0.10, z: 0.00 },
+      scale: 16.66,
+      position: { x: 0.0, y: -0.1, z: 0.0 },
     },
     showDefaultBackdrop: false,
     showPillars: false,
@@ -193,14 +223,14 @@ export const ARENAS: Record<string, ArenaConfig> = {
       // Near-black night with a cold violet tint at zenith
       top: new Color3(0.02, 0.01, 0.05),
       // Burning horizon — deep molten orange-red
-      horiz: new Color3(0.60, 0.10, 0.02),
+      horiz: new Color3(0.6, 0.1, 0.02),
       // Dark crimson at the ground line
       bottom: new Color3(0.18, 0.03, 0.01),
     },
     fog: { start: 20, end: 60, color: new Color3(0.28, 0.05, 0.02) },
     hideDefaultFloor: true,
     clearColor: new Color3(0.04, 0.01, 0.01),
-    bounds: { kind: 'circle', radius: 9.20 },
+    bounds: { kind: 'circle', radius: 9.2 },
   },
 };
 
@@ -216,5 +246,5 @@ export const ARENA_ORDER: readonly string[] = [
 
 export function getArenaConfig(id: string | undefined): ArenaConfig {
   if (id && ARENAS[id]) return ARENAS[id];
-  return ARENAS[DEFAULT_ARENA_ID]!;
+  return ARENAS[DEFAULT_ARENA_ID] as ArenaConfig;
 }

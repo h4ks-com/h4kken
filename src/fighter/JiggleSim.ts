@@ -251,20 +251,22 @@ export class JiggleSim {
   private readonly _colliders: ColliderState[] = [];
   private readonly _plates: PlateState[] = [];
   private readonly _lateralPairs: LateralPairState[] = [];
-  private readonly _rootNode: TransformNode | null;
   /** Inverse of fighter root uniform scale. Physics + collisions run in
    * skeleton-local space, so a world-meter radius like 0.10 must be divided
    * by fighter scale internally to match the actual world boundary. */
   private readonly _invScale: number;
   private _frameCount = 0;
+  // biome-ignore lint/correctness/noUnusedPrivateClassMembers: kept for potential future use
+  private readonly _rootNode: TransformNode | null;
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: init from declarative config
   constructor(skeleton: Skeleton, config: JiggleConfig, rootNode: TransformNode | null = null) {
     const { bones: configs, colliders = [], plateColliders = [], lateralPairs = [] } = config;
     this._rootNode = rootNode;
     this._invScale = rootNode ? 1 / Math.max(rootNode.scaling.x, 0.001) : 1;
     if (this._invScale !== 1) {
       console.log(
-        `[JiggleSim] fighter scale=${rootNode!.scaling.x.toFixed(3)}, ` +
+        `[JiggleSim] fighter scale=${rootNode?.scaling.x.toFixed(3)}, ` +
           `collider radii internally divided by it (config in world meters)`,
       );
     }
@@ -394,7 +396,7 @@ export class JiggleSim {
     // Build bone-name → index map for plate + lateral pair resolution.
     const boneByName = new Map<string, number>();
     for (let i = 0; i < this._bones.length; i++) {
-      boneByName.set(this._bones[i]!.bone.name, i);
+      boneByName.set((this._bones[i] as BoneState).bone.name, i);
     }
 
     // Resolve plate configs — each plate attached to a JIGGLE bone, gives
@@ -438,8 +440,8 @@ export class JiggleSim {
         const aIdx = boneByName.get(`${lp.chainA}_${i}`);
         const bIdx = boneByName.get(`${lp.chainB}_${i}`);
         if (aIdx === undefined || bIdx === undefined) continue;
-        const a = this._bones[aIdx]!;
-        const b = this._bones[bIdx]!;
+        const a = this._bones[aIdx] as BoneState;
+        const b = this._bones[bIdx] as BoneState;
         const dist = Vector3.Distance(a.currentTailWorld, b.currentTailWorld);
         this._lateralPairs.push({
           a: aIdx,
@@ -538,7 +540,7 @@ export class JiggleSim {
       );
       for (const c of this._colliders) {
         console.log(
-          `  collider: bone=${c.bone.name}${c.toBone ? '→' + c.toBone.name : ''} ` +
+          `  collider: bone=${c.bone.name}${c.toBone ? `→${c.toBone.name}` : ''} ` +
             `radius=${c.radius.toFixed(3)}m (skel=${(c.radius * this._invScale).toFixed(4)})`,
         );
       }
@@ -920,6 +922,7 @@ export class JiggleSim {
     return null;
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: physics step with collision response
   private _step(s: BoneState, dt: number): void {
     s.parentTN?.computeWorldMatrix(true);
     s.tn?.computeWorldMatrix(true);
@@ -1201,15 +1204,9 @@ export class JiggleSim {
     // affects next frame's spring force calc.
     if (this.contactSofteningEnabled) {
       if (inContactThisFrame) {
-        s.contactSoftness = Math.min(
-          1,
-          s.contactSoftness + this.contactSoftAttack,
-        );
+        s.contactSoftness = Math.min(1, s.contactSoftness + this.contactSoftAttack);
       } else {
-        s.contactSoftness = Math.max(
-          0,
-          s.contactSoftness - this.contactSoftRelease,
-        );
+        s.contactSoftness = Math.max(0, s.contactSoftness - this.contactSoftRelease);
       }
     } else {
       s.contactSoftness = 0;

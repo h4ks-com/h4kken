@@ -69,18 +69,21 @@ export class Stage {
       this.scene.fogEnd = 90;
     }
 
-    for (let i = 0; i < (this.arena.indoorLights?.length ?? 0); i++) {
-      const l = this.arena.indoorLights![i]!;
-      const light = new PointLight(
-        `indoorLight_${i}`,
-        new Vector3(l.position.x, l.position.y, l.position.z),
-        this.scene,
-      );
-      light.intensity = l.intensity;
-      light.range = l.range;
-      if (l.color) {
-        light.diffuse = l.color;
-        light.specular = l.color;
+    const indoorLights = this.arena.indoorLights;
+    if (indoorLights) {
+      for (let i = 0; i < indoorLights.length; i++) {
+        const l = indoorLights[i] as (typeof indoorLights)[number];
+        const light = new PointLight(
+          `indoorLight_${i}`,
+          new Vector3(l.position.x, l.position.y, l.position.z),
+          this.scene,
+        );
+        light.intensity = l.intensity;
+        light.range = l.range;
+        if (l.color) {
+          light.diffuse = l.color;
+          light.specular = l.color;
+        }
       }
     }
 
@@ -421,7 +424,7 @@ export class Stage {
       const lastSlash = scenery.glb.lastIndexOf('/');
       const dir = lastSlash >= 0 ? scenery.glb.substring(0, lastSlash + 1) : '';
       const file = lastSlash >= 0 ? scenery.glb.substring(lastSlash + 1) : scenery.glb;
-      const result = await SceneLoader.ImportMeshAsync(null, '/' + dir, file, this.scene);
+      const result = await SceneLoader.ImportMeshAsync(null, `/${dir}`, file, this.scene);
 
       const root = new TransformNode(`arenaRoot_${this.arena.id}`, this.scene);
       const scale = scenery.scale ?? 1;
@@ -429,7 +432,10 @@ export class Stage {
       if (scenery.position) {
         root.position.set(scenery.position.x, scenery.position.y, scenery.position.z);
       }
-      root.rotationQuaternion = Quaternion.RotationAxis(new Vector3(0, 0, 1), scenery.rotationZ ?? 0)
+      root.rotationQuaternion = Quaternion.RotationAxis(
+        new Vector3(0, 0, 1),
+        scenery.rotationZ ?? 0,
+      )
         .multiply(Quaternion.RotationAxis(new Vector3(0, 1, 0), scenery.rotationY ?? 0))
         .multiply(Quaternion.RotationAxis(new Vector3(1, 0, 0), scenery.rotationX ?? 0));
 

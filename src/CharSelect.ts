@@ -9,8 +9,8 @@ import {
   type Observer,
   Quaternion,
   type Scene,
-  type Skeleton,
   type ShadowGenerator,
+  type Skeleton,
   TransformNode,
   Vector3,
 } from '@babylonjs/core';
