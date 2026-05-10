@@ -80,6 +80,7 @@ export const ARENAS: Record<string, ArenaConfig> = {
     name: 'Mountain Field',
     scenery: {
       glb: 'assets/arenas/default.glb',
+      // biome-ignore lint/suspicious/noApproximativeNumericConstant: tuned scale, not Math.LOG2E
       scale: 1.443,
       position: { x: 0.0, y: -0.25, z: 0.0 },
     },
