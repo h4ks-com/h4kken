@@ -103,7 +103,7 @@ export const ARENAS: Record<string, ArenaConfig> = {
     showSky: true,
     hideDefaultFloor: true,
     linear: true,
-    fog: { start: 20, end: 55, color: new Color3(0.6, 0.75, 0.9) },
+    fog: { start: 30, end: 80, color: new Color3(0.6, 0.75, 0.9) },
     bounds: { kind: 'rect', halfWidth: 9.8, halfDepth: 3.7 },
     sunDirection: new Vector3(0.5, -1.0, 0.6).normalize(),
     cameraPitch: (20 * Math.PI) / 180,
