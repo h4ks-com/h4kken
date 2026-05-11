@@ -70,6 +70,14 @@ export interface ArenaConfig {
   ambientBoost?: number;
   /** Multiplier on sun light intensity. Default 1.0. */
   sunBoost?: number;
+  /** ShadowGenerator.darkness — 0 = solid black shadow, 1 = invisible. Default
+   * 0 (Babylon default). Lift toward 0.5 for enclosed scenery so building
+   * shadows are visible but don't crush the ground. */
+  shadowDarkness?: number;
+  /** Half-size (world units) of the directional sun's shadow ortho box,
+   * centred on the play area. Smaller = sharper shadows on the ring, but
+   * distant scenery won't appear in shadow. Default 18. */
+  shadowOrthoSize?: number;
 }
 
 export const DEFAULT_ARENA_ID = 'default';
@@ -89,14 +97,16 @@ export const ARENAS: Record<string, ArenaConfig> = {
     showSky: true,
     hideDefaultFloor: true,
     bounds: { kind: 'circle', radius: 10.0 },
+    sunDirection: new Vector3(-0.6, -1.0, -0.5).normalize(),
   },
   japan_street: {
     id: 'japan_street',
     name: 'Japan Street',
     scenery: {
       glb: 'assets/arenas/japan_street.glb',
-      scale: Math.LOG2E,
-      position: { x: -5.3, y: 0.0, z: -7.6 },
+      // biome-ignore lint/suspicious/noApproximativeNumericConstant: tuned scale, not Math.LOG2E
+      scale: 1.443,
+      position: { x: -9.7, y: 0.0, z: -12.7 },
       rotationY: 1.571,
     },
     showDefaultBackdrop: false,
@@ -110,6 +120,7 @@ export const ARENAS: Record<string, ArenaConfig> = {
     cameraPitch: (20 * Math.PI) / 180,
     ambientBoost: 2.0,
     sunBoost: 1.5,
+    shadowDarkness: 0.55,
   },
   warehouse: {
     id: 'warehouse',
@@ -128,6 +139,7 @@ export const ARENAS: Record<string, ArenaConfig> = {
     clearColor: new Color3(0.05, 0.05, 0.06),
     fog: { start: 20, end: 60, color: new Color3(0.05, 0.05, 0.06) },
     bounds: { kind: 'rect', halfWidth: 13.5, halfDepth: 13.45 },
+    shadowDarkness: 0.6,
     indoorLights: [
       {
         position: { x: -8, y: 8, z: -3 },
@@ -186,6 +198,7 @@ export const ARENAS: Record<string, ArenaConfig> = {
     fog: { start: 60, end: 140, color: new Color3(0.95, 0.78, 0.55) },
     hideDefaultFloor: true,
     bounds: { kind: 'circle', radius: 18.0 },
+    sunDirection: new Vector3(0.0, -1.0, 0.0),
   },
   temple: {
     id: 'temple',
@@ -208,6 +221,8 @@ export const ARENAS: Record<string, ArenaConfig> = {
     linear: true,
     hideDefaultFloor: true,
     bounds: { kind: 'rect', halfWidth: 10.85, halfDepth: 7.9 },
+    shadowDarkness: 0.45,
+    sunDirection: new Vector3(-0.8, -0.6, -0.2).normalize(),
   },
   hell: {
     id: 'hell',
@@ -232,6 +247,7 @@ export const ARENAS: Record<string, ArenaConfig> = {
     hideDefaultFloor: true,
     clearColor: new Color3(0.04, 0.01, 0.01),
     bounds: { kind: 'circle', radius: 9.2 },
+    sunDirection: new Vector3(-0.3, -0.8, 0.5).normalize(),
   },
 };
 

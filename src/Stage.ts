@@ -95,6 +95,9 @@ export class Stage {
     // so everything in the scene at this point is a static stage mesh. Freeze
     // their world matrices and materials to eliminate per-frame recalculation.
     for (const mesh of this.scene.meshes) {
+      // Sky uses infiniteDistance to stay locked to the camera — must not be
+      // frozen, otherwise it stops following and edges become visible.
+      if (mesh.name === 'sky') continue;
       mesh.freezeWorldMatrix();
       mesh.doNotSyncBoundingInfo = true;
       // Prevent frustum cull checks — every stage mesh is always visible.
@@ -119,6 +122,17 @@ export class Stage {
     sun.diffuse = new Color3(1.0, 0.96, 0.88);
     sun.intensity = 1.8 * (this.arena.sunBoost ?? 1.0);
     sun.position = new Vector3(8, 18, 10);
+    // Pin the ortho frustum to the play area so the 2K shadow map's texels
+    // are tiny over the ring (sharp shadows) instead of stretched across the
+    // whole 200m scene (pixelated shadows + acne on smooth surfaces).
+    sun.autoUpdateExtends = false;
+    const orthoHalf = this.arena.shadowOrthoSize ?? 18;
+    sun.orthoLeft = -orthoHalf;
+    sun.orthoRight = orthoHalf;
+    sun.orthoTop = orthoHalf;
+    sun.orthoBottom = -orthoHalf;
+    sun.shadowMinZ = -80;
+    sun.shadowMaxZ = 80;
 
     // Mobile: 1024px shadow map + QUALITY_LOW (4× fewer texels, fewer PCF samples).
     // Desktop: 2048px + QUALITY_MEDIUM for smooth soft shadows.
@@ -128,10 +142,15 @@ export class Stage {
     shadowGen.usePercentageCloserFiltering = true;
     shadowGen.filteringQuality = mobile
       ? ShadowGenerator.QUALITY_LOW
-      : ShadowGenerator.QUALITY_MEDIUM;
-    shadowGen.bias = 0.002;
-    shadowGen.normalBias = 0.08;
-    shadowGen.forceBackFacesOnly = true;
+      : ShadowGenerator.QUALITY_HIGH;
+    shadowGen.bias = 0.003;
+    // normalBias offsets the receiver along its surface normal in world units.
+    // Larger than a thin limb's half-width skips that limb's contribution and
+    // leaves a skeleton-outline shadow under narrow characters.
+    shadowGen.normalBias = 0.02;
+    if (this.arena.shadowDarkness !== undefined) {
+      shadowGen.darkness = this.arena.shadowDarkness;
+    }
 
     this._shadowGen = shadowGen;
   }
@@ -392,7 +411,8 @@ export class Stage {
       }
     `;
 
-    const sky = MeshBuilder.CreateSphere('sky', { diameter: 180, segments: 16 }, this.scene);
+    const sky = MeshBuilder.CreateSphere('sky', { diameter: 1000, segments: 32 }, this.scene);
+    sky.infiniteDistance = true;
     const skyMat = new ShaderMaterial(
       'skyMat',
       this.scene,
@@ -449,8 +469,6 @@ export class Stage {
         // sampling code. Freezing here would permanently lock out shadows.
         // The world matrix is still frozen since the scenery never moves.
         m.freezeWorldMatrix();
-        // Register as shadow caster so walls/columns/floor cast shadows on each
-        // other. _shadowGen is already sized for the device (1024 mobile / 2048 desktop).
         this._shadowGen?.addShadowCaster(m, true);
       }
     } catch (err) {

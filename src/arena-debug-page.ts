@@ -119,7 +119,8 @@ function buildDebugSky(
       }
     `;
   }
-  const sky = MeshBuilder.CreateSphere('debugSky', { diameter: 180, segments: 16 }, scene);
+  const sky = MeshBuilder.CreateSphere('debugSky', { diameter: 1000, segments: 32 }, scene);
+  sky.infiniteDistance = true;
   const skyMat = new ShaderMaterial(
     'debugSkyMat',
     scene,
