@@ -6,7 +6,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
-COPY tsconfig.json tsconfig.server.json vite.config.ts index.html ./
+COPY tsconfig.json tsconfig.server.json vite.config.ts index.html debug.html arena-debug.html ./
 COPY src/ ./src/
 COPY server.ts ./
 COPY public/ ./public/

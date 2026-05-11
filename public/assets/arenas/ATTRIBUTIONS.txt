@@ -1,0 +1,93 @@
+H4KKEN — Arena scenery attributions
+====================================
+
+Each model below ships in public/assets/arenas/ in modified form
+(decimated mesh + downscaled textures + recentred origin). Originals
+remain copyright their respective authors under the licenses noted.
+
+----------------------------------------------------------------------
+japan_street.glb — "Japan street"
+  Author:  abhayexe
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/japan-street-e5cdc0a52c074d82af6b7d087043acba
+
+----------------------------------------------------------------------
+warehouse.glb — "Warehouse FBX Model Free"
+  Author:  Nicholas01
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/warehouse-fbx-model-free-daa7fd3ff88945298d00045ca40a4c03
+
+----------------------------------------------------------------------
+colosseum.glb — "Previz-Lowpoly Colosseum with concept textures"
+  Author:  neberkenezer
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/previz-lowpoly-colosseum-with-concept-textures-c1c2391478a34ba9a4c5f254c662fb30
+  Notes:   Scaled 0.22, joined into one mesh, decimated to ~99k tris.
+
+----------------------------------------------------------------------
+temple.glb — "Sunrise Temple Environment"
+  Author:  Bl4ckGh0st
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/sunrise-temple-environment-aebbcf55f5e34401bba8220743596060
+  Notes:   Heavily decimated (~3% of original tris) and JPEG-compressed
+           textures to fit web budget.
+
+----------------------------------------------------------------------
+sky_temple.glb — "Floating Japanese Bell Temple"
+  Author:  AlfieWilson
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/floating-japanese-bell-temple-c203dd04fadd4cf8be80553a0c0cbb8c
+  Notes:   Recentred to origin; otherwise unmodified.
+
+----------------------------------------------------------------------
+hell.glb — "Hell arena"
+  Author:  3dmanx888
+  License: CC Attribution 4.0 (CC-BY)
+  Source:  https://sketchfab.com/3d-models/hell-arena-b24597cc453a4919a97037be03abf38d
+  Notes:   Used as-is; placement tuned via arena debug page.
+
+----------------------------------------------------------------------
+default.glb — "Mountain Field" arena, assembled in Blender from:
+
+  "Greek Temple"
+    Author:  cmzw
+    License: CC Attribution 4.0 (CC-BY)
+    Source:  https://sketchfab.com/3d-models/greek-temple-ebebc093bfe0483b8e8604d41a988c6f
+    Notes:   Decimated from 4.6M → 100K faces; marble-white material;
+             placed at (60, 0) facing arena center.
+
+
+
+  "Jungle Tree"
+    Author:  rodrigogelmi
+    License: CC Attribution 4.0 (CC-BY)
+    Source:  https://sketchfab.com/3d-models/jungle-tree-b760147faadf41eabb2bb6cb85274d8a
+    Notes:   Decimated (ratio 0.12), scaled to ~6 m, instanced 16 ×.
+
+  "Old Building Pilar"
+    Author:  arieffitrah
+    License: CC Attribution 4.0 (CC-BY)
+    Source:  https://sketchfab.com/3d-models/old-building-pilar-b4bd593bf0594959809af345842848de
+    Notes:   Decimated (ratio 0.12), scaled to ~5.5 m, instanced 4 ×.
+
+  "Free Pack - Rocks Stylized"
+    Author:  polyone
+    License: CC Attribution 4.0 (CC-BY)
+    Source:  https://sketchfab.com/3d-models/free-pack-rocks-stylized-7c60b4d1b8ab4187965f30c5e0212fc0
+    Notes:   11 stylized rock types, scaled to 0.5–2 m, scattered 54 × around platform.
+
+  "Lowpoly Flower Bushes"
+    Author:  krauchankavarvara
+    License: CC Attribution 4.0 (CC-BY)
+    Source:  https://sketchfab.com/3d-models/lowpoly-flower-bushes-4b47abf072604a71aaf1bda30847a1af
+    Notes:   Billboard foliage pack, scaled to ~1.5–2.5 m, scattered 35 × on terrain.
+
+  Terrain mesh (noise-displaced 120×120 grid), ground, rings, and mountains
+  are procedural geometry authored for this project — no attribution required.
+
+  "Leafy Grass" (terrain ground texture)
+    Author:  Rob Tuytel
+    License: CC0 Public Domain
+    Source:  https://polyhaven.com/a/leafy_grass
+    Notes:   1K diff + nor + roughness; baked into 2K terrain atlas with
+             height-based green tint for mountain areas.

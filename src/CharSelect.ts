@@ -6,12 +6,15 @@ import {
   type AbstractMesh,
   type AnimationGroup,
   type FreeCamera,
+  type Observer,
   Quaternion,
   type Scene,
+  type ShadowGenerator,
   type Skeleton,
   TransformNode,
   Vector3,
 } from '@babylonjs/core';
+import { ARENA_ORDER, ARENAS, DEFAULT_ARENA_ID } from './arenas';
 import type { AnimKey } from './fighter/animations';
 import { CHARACTERS, DEFAULT_P1, DEFAULT_P2 } from './fighter/characters';
 import {
@@ -20,6 +23,7 @@ import {
   remapAnimationTarget,
 } from './fighter/cloneBindings';
 import type { SharedAssets } from './fighter/Fighter';
+import { JiggleSim } from './fighter/JiggleSim';
 
 const CYCLE_ANIMS: readonly AnimKey[] = ['victorySmug', 'introTalking'];
 const CYCLE_INTERVAL_MS = 4000;
@@ -27,16 +31,24 @@ const FLOURISH_ANIM: AnimKey = 'victoryCelebrate';
 const FLOURISH_DURATION_MS = 2000;
 
 class SelectSlot {
-  private positionNode: TransformNode;
+  /** Exposed so the host (Game) can spare these nodes when rebuilding the
+   * stage for live arena previews — without this, the dispose pass below
+   * would wipe the lineup characters. */
+  positionNode: TransformNode;
   private clonedMeshes: AbstractMesh[] = [];
   private currentAnimGroups: Record<string, AnimationGroup> = {};
   private currentSkeleton: Skeleton | null = null;
   private cycleInterval: ReturnType<typeof setInterval> | null = null;
   private cycleIndex = 0;
   private cycleAnims: readonly AnimKey[] = CYCLE_ANIMS;
+  private jiggleSim: JiggleSim | null = null;
+  private renderObserver: Observer<Scene> | null = null;
+  private lastFrameMs = 0;
+  private blendingEnabled = false;
+  private shadowGen: ShadowGenerator | null = null;
 
   constructor(
-    scene: Scene,
+    private readonly scene: Scene,
     private xOffset: number,
   ) {
     this.positionNode = new TransformNode(`cs_slot_${xOffset}`, scene);
@@ -47,6 +59,13 @@ class SelectSlot {
   setOffset(x: number) {
     this.xOffset = x;
     this.positionNode.position.x = x;
+  }
+
+  setShadowGenerator(gen: ShadowGenerator | null) {
+    this.shadowGen = gen;
+    if (gen) {
+      for (const m of this.clonedMeshes) gen.addShadowCaster(m, true);
+    }
   }
 
   setCharacter(assets: SharedAssets, cycleAnims?: readonly AnimKey[]) {
@@ -69,6 +88,8 @@ class SelectSlot {
       if (!clone) continue;
       clone.setEnabled(true);
       if (clonedSkeleton && clone.skeleton) clone.skeleton = clonedSkeleton;
+      clone.receiveShadows = true;
+      this.shadowGen?.addShadowCaster(clone, true);
       this.clonedMeshes.push(clone);
     }
 
@@ -78,6 +99,19 @@ class SelectSlot {
       );
       clonedGroup.stop();
       this.currentAnimGroups[name] = clonedGroup;
+    }
+    this.blendingEnabled = false;
+
+    // Spring-bone secondary motion (cloth/hair/breast). Same setup as Fighter.
+    if (assets.jiggle?.bones.length && clonedSkeleton) {
+      this.jiggleSim = new JiggleSim(clonedSkeleton, assets.jiggle, this.positionNode);
+      this.lastFrameMs = performance.now();
+      this.renderObserver = this.scene.onBeforeRenderObservable.add(() => {
+        const now = performance.now();
+        const dt = now - this.lastFrameMs;
+        this.lastFrameMs = now;
+        this.jiggleSim?.update(dt);
+      });
     }
 
     this._startCycle();
@@ -90,6 +124,17 @@ class SelectSlot {
       if (ag !== target) ag.stop();
     }
     target.play(loop);
+    // After the first play settles the bones into pose, enable blending for
+    // subsequent transitions so spring physics doesn't get kicked.
+    if (!this.blendingEnabled) {
+      this.blendingEnabled = true;
+      for (const ag of Object.values(this.currentAnimGroups)) {
+        for (const ta of ag.targetedAnimations) {
+          ta.animation.enableBlending = true;
+          ta.animation.blendingSpeed = 0.05;
+        }
+      }
+    }
   }
 
   private _startCycle() {
@@ -122,6 +167,12 @@ class SelectSlot {
 
   clear() {
     this._clearCycle();
+    if (this.renderObserver) {
+      this.scene.onBeforeRenderObservable.remove(this.renderObserver);
+      this.renderObserver = null;
+    }
+    this.jiggleSim?.dispose();
+    this.jiggleSim = null;
     for (const ag of Object.values(this.currentAnimGroups)) {
       ag.stop();
       ag.dispose();
@@ -140,8 +191,17 @@ class SelectSlot {
 }
 
 interface CharSelectHandlers {
-  onConfirm?: (p1Id: string, p2Id: string) => void;
+  /** Practice confirm: both characters and the chosen arena. Online uses
+   * onReady instead — final arena is resolved server-side from the two votes. */
+  onConfirm?: (p1Id: string, p2Id: string, arenaId: string) => void;
   onPick?: (charId: string) => void;
+  /** Online only: sent every time the local player changes their arena vote.
+   * Server relays it to the opponent for live UI feedback. */
+  onArenaPick?: (arenaId: string) => void;
+  /** Live preview hook — fired whenever the local player picks an arena card,
+   * including 'random' (use 'default' as preview placeholder). Game rebuilds
+   * the stage so the player sees the new scenery behind the lineup. */
+  onArenaPreview?: (arenaId: string) => void;
   onReady?: () => void;
   onBack: () => void;
 }
@@ -159,6 +219,12 @@ export class CharSelect {
   private opponentReady = false;
   private localReady = false;
   private opponentName = '';
+  /** Locally voted arena id, or 'random' for "let the game pick". In online
+   * mode this is also pushed to the server every time it changes; the server
+   * relays it to the opponent and reconciles both votes at match start. */
+  private arenaVote: string = 'random';
+  /** Opponent's currently advertised arena vote, or null if none yet. */
+  private opponentArenaVote: string | null = null;
 
   constructor(
     scene: Scene,
@@ -171,13 +237,37 @@ export class CharSelect {
     this.p2SelectedId = DEFAULT_P2;
   }
 
-  show(mode: 'practice' | 'online', handlers: CharSelectHandlers) {
+  /** Roots that the host must spare during stage rebuilds — otherwise the
+   * lineup characters get caught in the arena-swap dispose pass. */
+  get displayRoots(): TransformNode[] {
+    return [this.slot1.positionNode, this.slot2.positionNode];
+  }
+
+  setShadowGenerator(gen: ShadowGenerator | null) {
+    this.slot1.setShadowGenerator(gen);
+    this.slot2.setShadowGenerator(gen);
+  }
+
+  show(
+    mode: 'practice' | 'online',
+    handlers: CharSelectHandlers,
+    initialArenaVote: string = DEFAULT_ARENA_ID,
+  ) {
     this.mode = mode;
     this.handlers = handlers;
     this.opponentPresent = false;
     this.opponentReady = false;
     this.localReady = false;
     this.opponentName = '';
+    // Seed from caller only when it's a specific non-default arena (e.g. URL
+    // param or carry-over from a previous match). The very first time through,
+    // currentArenaId is 'default', which we treat as "no explicit pick yet" →
+    // start on RANDOM so players don't inadvertently lock in Mountain Field.
+    this.arenaVote =
+      initialArenaVote && initialArenaVote !== DEFAULT_ARENA_ID && initialArenaVote in ARENAS
+        ? initialArenaVote
+        : 'random';
+    this.opponentArenaVote = null;
 
     this.savedCamPos = this.camera.position.clone();
     this.savedCamTarget = this.camera.target.clone();
@@ -277,11 +367,17 @@ export class CharSelect {
           ${isOnline ? '<div class="cs-p2-body" id="cs-p2-body"></div>' : '<div class="cs-char-grid" id="cs-p2-grid"></div>'}
         </div>
       </div>
+      <div class="cs-arena-strip">
+        <div class="cs-arena-label">ARENA</div>
+        <div class="cs-arena-grid" id="cs-arena-grid"></div>
+      </div>
       <div class="cs-footer">
         <button class="cs-btn cs-back-btn">BACK</button>
         <button class="cs-btn cs-confirm-btn" id="cs-confirm">${isOnline ? 'READY' : 'FIGHT!'}</button>
       </div>
     `;
+
+    this._populateArenaGrid();
 
     const p1Grid = this._container().querySelector<HTMLElement>('#cs-p1-grid');
     if (p1Grid) {
@@ -321,8 +417,78 @@ export class CharSelect {
       this._renderConfirmButton();
       this.handlers?.onReady?.();
     } else {
-      this.handlers?.onConfirm?.(this.p1SelectedId, this.p2SelectedId);
+      const arena = this._resolveArenaForConfirm();
+      this.handlers?.onConfirm?.(this.p1SelectedId, this.p2SelectedId, arena);
     }
+  }
+
+  /** Practice has only one human, so the local vote is binding. 'random' rolls
+   * uniformly across the registry. Online uses a different path: each player's
+   * vote rides over the wire and is reconciled server-side. */
+  private _resolveArenaForConfirm(): string {
+    if (this.arenaVote && this.arenaVote !== 'random' && ARENAS[this.arenaVote]) {
+      return this.arenaVote;
+    }
+    const ids = ARENA_ORDER.filter((id) => id in ARENAS);
+    return ids[Math.floor(Math.random() * ids.length)] ?? DEFAULT_ARENA_ID;
+  }
+
+  private _populateArenaGrid() {
+    const grid = this._container().querySelector<HTMLElement>('#cs-arena-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    const card = (id: string, label: string) => {
+      const el = document.createElement('div');
+      el.className = 'cs-arena-card';
+      if (id === this.arenaVote) el.classList.add('selected');
+      el.dataset.arenaId = id;
+      el.innerHTML = `<div class="cs-arena-name">${label}</div>`;
+      el.addEventListener('click', () => this._selectArena(id));
+      return el;
+    };
+
+    grid.appendChild(card('random', 'RANDOM'));
+    for (const id of ARENA_ORDER) {
+      const cfg = ARENAS[id];
+      if (!cfg) continue;
+      grid.appendChild(card(id, cfg.name.toUpperCase()));
+    }
+  }
+
+  private _selectArena(id: string) {
+    this.arenaVote = id;
+    this._renderArenaSelections();
+    if (this.mode === 'online') this.handlers?.onArenaPick?.(id);
+    // Preview a concrete arena even when 'random' is chosen so the lineup
+    // background stays meaningful (default field is the safe placeholder).
+    const previewId = id === 'random' ? DEFAULT_ARENA_ID : id;
+    this.handlers?.onArenaPreview?.(previewId);
+  }
+
+  /** Re-paint selection markers for both local and opponent votes. */
+  private _renderArenaSelections() {
+    const grid = this._container().querySelector<HTMLElement>('#cs-arena-grid');
+    if (!grid) return;
+    for (const child of grid.querySelectorAll<HTMLElement>('.cs-arena-card')) {
+      const id = child.dataset.arenaId ?? '';
+      child.classList.toggle('selected', id === this.arenaVote);
+      child.classList.toggle(
+        'opp-selected',
+        this.mode === 'online' && id === this.opponentArenaVote && id !== this.arenaVote,
+      );
+      child.classList.toggle(
+        'both-selected',
+        this.mode === 'online' && id === this.opponentArenaVote && id === this.arenaVote,
+      );
+    }
+  }
+
+  /** Server pushed the opponent's arena vote — refresh markers. */
+  setOpponentArenaVote(id: string) {
+    if (this.mode !== 'online') return;
+    this.opponentArenaVote = id;
+    this._renderArenaSelections();
   }
 
   private _renderP2Panel() {

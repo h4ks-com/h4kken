@@ -61,7 +61,48 @@ export const CHARACTERS: CharacterSource[] = [
    final scene (mesh + skeleton + retargeted animation groups) to
    `<id>.glb`.
 
-## Notes / gotchas
+# Arena export
+
+Bakes an arena `.blend` (`assets/source/*.blend`) → `public/assets/arenas/<id>.glb`,
+which the runtime loads via `ARENAS[id].scenery.glb` in
+[`src/arenas/index.ts`](../src/arenas/index.ts).
+
+## Run
+
+```sh
+bun run build:arena default                  # default_arena.blend → default.glb
+bun run build:arena temple                   # temple.blend        → temple.glb
+bun run build:arena foo /path/to/foo.blend   # custom source path
+```
+
+The wrapper resolves `default` → `default_arena.blend` for legacy naming.
+Any other id maps `<id>` → `<id>.blend` in `assets/source/`.
+
+## What it does
+
+1. Opens the `.blend` in headless Blender.
+2. Exports visible objects to GLB with modifiers applied (`export_apply=True`),
+   Y-up to match Babylon's left-handed convention, no cameras / no lights /
+   no animations — arenas are static scenery; lighting and the sky dome come
+   from `Stage.ts` (sun + ambient + per-arena `indoorLights`).
+
+## Add a new arena
+
+1. Author the scene in `assets/source/<id>.blend`. Centre the playable area
+   roughly at world origin; the loader applies `scenery.position` / `scale`
+   / `rotation*` from `ARENAS[id].scenery` at runtime.
+2. `bun run build:arena <id>`.
+3. Register in [`src/arenas/index.ts`](../src/arenas/index.ts) `ARENAS` and
+   add to `ARENA_ORDER`. Tune placement via `/arena-debug.html` and paste
+   the copy-button output back into the config.
+
+## Env overrides
+
+| Var       | Default                     |
+| --------- | --------------------------- |
+| `BLENDER` | `/opt/homebrew/bin/blender` |
+
+# Notes / gotchas
 
 - Mixamo only rigs thumb + index per hand. UAL's middle/ring/pinky bones
   have no target and get dropped; those fingers follow `hand_l` as a blob.

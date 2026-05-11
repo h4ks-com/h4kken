@@ -1222,6 +1222,73 @@ html, body {
   50% { opacity: 0.7; }
 }
 
+.cs-arena-strip {
+  background: rgba(8, 8, 18, 0.85);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.cs-arena-label {
+  font-family: var(--font-main);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+}
+
+.cs-arena-grid {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  flex: 1;
+}
+
+.cs-arena-card {
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.cs-arena-card:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.cs-arena-card.selected {
+  background: rgba(0, 200, 255, 0.18);
+  border-color: var(--p1-color);
+}
+
+.cs-arena-card.opp-selected {
+  /* Opponent vote on a card the local player did NOT pick. Subtle red border. */
+  border-color: var(--p2-color, #ff3366);
+  box-shadow: inset 0 -3px 0 var(--p2-color, #ff3366);
+}
+
+.cs-arena-card.both-selected {
+  /* Both players agree on this card. Stronger glow to telegraph "this is it". */
+  background: rgba(0, 255, 200, 0.18);
+  border-color: #4cffd6;
+  box-shadow: 0 0 12px rgba(76, 255, 214, 0.4);
+}
+
+.cs-arena-name {
+  font-family: var(--font-main);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  color: var(--text);
+  text-transform: uppercase;
+}
+
 .cs-footer {
   height: 72px;
   background: rgba(8, 8, 18, 0.95);

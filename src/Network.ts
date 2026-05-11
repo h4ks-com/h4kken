@@ -28,6 +28,14 @@ interface MatchedMsg {
   opponentName: string;
   roomId: string;
   opponentCharacterId?: string;
+  /** Arena id reconciled from both players' votes. Optional for backward
+   * compatibility with older servers that don't yet send it. */
+  arenaId?: string;
+}
+
+interface OpponentArenaMsg {
+  type: 'opponentArena';
+  arenaId: string;
 }
 
 interface LobbyMatchedMsg {
@@ -124,6 +132,7 @@ type ServerMessage =
   | MatchedMsg
   | LobbyMatchedMsg
   | OpponentPickMsg
+  | OpponentArenaMsg
   | OpponentReadyMsg
   | CountdownMsg
   | OpponentInputMsg
@@ -166,6 +175,7 @@ export interface FighterStateSync {
 
 type JoinMsg = { type: 'join'; name: string; characterId: string };
 type PickMsg = { type: 'pick'; characterId: string };
+type PickArenaMsg = { type: 'pickArena'; arenaId: string };
 type ReadyMsg = { type: 'ready' };
 type PingMsg = { type: 'ping'; t: number };
 type RoundResultOutMsg = {
@@ -186,6 +196,7 @@ type RtcIceOutMsg = { type: 'rtc-ice'; candidate: string };
 type ClientMessage =
   | JoinMsg
   | PickMsg
+  | PickArenaMsg
   | ReadyMsg
   | PingMsg
   | RoundResultOutMsg
@@ -205,6 +216,7 @@ type HandlerMap = {
   matched: (msg: MatchedMsg) => void;
   lobbyMatched: (msg: LobbyMatchedMsg) => void;
   opponentPick: (msg: OpponentPickMsg) => void;
+  opponentArena: (msg: OpponentArenaMsg) => void;
   countdown: (msg: CountdownMsg) => void;
   opponentInput: (msg: OpponentInputMsg) => void;
   opponentSyncInput: (msg: OpponentSyncInputMsg) => void;
@@ -411,6 +423,9 @@ export class Network {
       case 'opponentPick':
         this.emit('opponentPick', msg);
         break;
+      case 'opponentArena':
+        this.emit('opponentArena', msg);
+        break;
       case 'opponentReady':
         this.emit('opponentReady');
         break;
@@ -467,6 +482,10 @@ export class Network {
 
   sendPick(characterId: string) {
     this.send({ type: 'pick', characterId });
+  }
+
+  sendArenaPick(arenaId: string) {
+    this.send({ type: 'pickArena', arenaId });
   }
 
   sendReady() {

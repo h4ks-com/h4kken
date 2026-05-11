@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>H4KKEN — Arena Placement Debug</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: -apple-system, system-ui, sans-serif; color: #eee; }
+    #canvas { width: 100vw; height: 100vh; display: block; touch-action: none; }
+    #panel {
+      position: absolute; top: 8px; right: 8px;
+      background: rgba(0,0,0,0.88);
+      padding: 10px 12px; border-radius: 6px;
+      font-size: 12px; width: 240px; max-height: calc(100vh - 24px);
+      overflow-y: auto; z-index: 10; backdrop-filter: blur(4px);
+      box-sizing: border-box;
+    }
+    #panel h3 { margin: 8px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #888; }
+    #panel h3:first-child { margin-top: 0; }
+    #panel select, #panel button {
+      width: 100%; padding: 6px 8px; margin: 2px 0;
+      background: #2a2a2a; color: #eee; border: 1px solid #444;
+      border-radius: 3px; font-size: 12px; box-sizing: border-box; cursor: pointer;
+    }
+    #panel select:hover, #panel button:hover { background: #333; border-color: #555; }
+    .row {
+      display: grid; grid-template-columns: auto 1fr;
+      align-items: center; gap: 6px; margin: 2px 0;
+    }
+    .row label { font-size: 10px; color: #bbb; white-space: nowrap; }
+    .row .val {
+      display: block; font-size: 11px; color: #8cf; text-align: right;
+      font-family: monospace; cursor: ew-resize; user-select: none;
+      padding: 4px 8px; border-radius: 3px; box-sizing: border-box;
+      background: rgba(90,170,255,0.13); border: 1px solid rgba(90,170,255,0.22);
+      transition: background 0.08s, border-color 0.08s;
+    }
+    .row .val:hover { background: rgba(90,170,255,0.24); border-color: rgba(90,170,255,0.42); }
+    .row .val.dragging { background: rgba(90,170,255,0.36); border-color: rgba(90,170,255,0.62); }
+    .check-row {
+      display: flex; align-items: center; gap: 8px;
+      margin: 5px 0; cursor: pointer; user-select: none;
+    }
+    .check-row input[type="checkbox"] { margin: 0; cursor: pointer; accent-color: #5af; }
+    .desc { font-size: 9px; color: #777; margin: 1px 0 4px 0; line-height: 1.3; }
+    .snap-btns { display: flex; gap: 2px; margin: 2px 0 6px; }
+    .snap-btn {
+      flex: 1; padding: 3px 0; font-size: 9px; font-family: monospace;
+      background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 2px;
+      color: #777; cursor: pointer; text-align: center;
+      transition: background 0.07s, color 0.07s;
+    }
+    .snap-btn:hover { background: #2a2a2a; color: #ccc; border-color: #555; }
+    .snap-btn.active { background: rgba(90,170,255,0.18); border-color: rgba(90,170,255,0.48); color: #8cf; }
+    #panel .help { font-size: 10px; color: #888; margin-top: 10px; line-height: 1.4; }
+    #panel button.primary { background: #1a4a2a; border-color: #3a8a5a; color: #8df; }
+    #panel button.primary:hover { background: #225533; }
+    #output {
+      margin-top: 6px; background: #111; border: 1px solid #333; border-radius: 3px;
+      padding: 6px; font-size: 10px; color: #8cf; font-family: monospace;
+      white-space: pre; line-height: 1.5; display: none;
+    }
+    #status {
+      position: absolute; bottom: 8px; left: 8px;
+      background: rgba(0,0,0,0.75); padding: 6px 10px; border-radius: 4px;
+      font-size: 11px; color: #aaa; font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="panel">
+    <h3>Arena</h3>
+    <select id="arena-select"></select>
+
+    <h3>Position</h3>
+    <div class="row"><label>X</label><span class="val" id="px-val">0.00</span></div>
+    <div class="row"><label>Y</label><span class="val" id="py-val">0.00</span></div>
+    <div class="row"><label>Z</label><span class="val" id="pz-val">0.00</span></div>
+
+    <h3>Scale</h3>
+    <div class="row"><label>Uniform scale</label><span class="val" id="sc-val">1.000</span></div>
+
+    <h3>Rotation</h3>
+    <div class="row"><label>X (°)</label><span class="val" id="rx-val">0.0</span></div>
+    <div class="snap-btns">
+      <button class="snap-btn" data-dn="rx" data-deg="-90">−90</button>
+      <button class="snap-btn" data-dn="rx" data-deg="-45">−45</button>
+      <button class="snap-btn" data-dn="rx" data-deg="0">0</button>
+      <button class="snap-btn" data-dn="rx" data-deg="45">45</button>
+      <button class="snap-btn" data-dn="rx" data-deg="90">90</button>
+      <button class="snap-btn" data-dn="rx" data-deg="180">180</button>
+    </div>
+    <div class="row"><label>Y (°)</label><span class="val" id="ry-val">0.0</span></div>
+    <div class="snap-btns">
+      <button class="snap-btn" data-dn="ry" data-deg="0">0</button>
+      <button class="snap-btn" data-dn="ry" data-deg="45">45</button>
+      <button class="snap-btn" data-dn="ry" data-deg="90">90</button>
+      <button class="snap-btn" data-dn="ry" data-deg="135">135</button>
+      <button class="snap-btn" data-dn="ry" data-deg="180">180</button>
+      <button class="snap-btn" data-dn="ry" data-deg="225">225</button>
+      <button class="snap-btn" data-dn="ry" data-deg="270">270</button>
+      <button class="snap-btn" data-dn="ry" data-deg="315">315</button>
+    </div>
+    <div class="row"><label>Z (°)</label><span class="val" id="rz-val">0.0</span></div>
+    <div class="snap-btns">
+      <button class="snap-btn" data-dn="rz" data-deg="-90">−90</button>
+      <button class="snap-btn" data-dn="rz" data-deg="-45">−45</button>
+      <button class="snap-btn" data-dn="rz" data-deg="0">0</button>
+      <button class="snap-btn" data-dn="rz" data-deg="45">45</button>
+      <button class="snap-btn" data-dn="rz" data-deg="90">90</button>
+      <button class="snap-btn" data-dn="rz" data-deg="180">180</button>
+    </div>
+
+    <h3>Bounds <span style="color:#666;font-size:9px;font-weight:normal">(shown in yellow)</span></h3>
+    <select id="bounds-type">
+      <option value="circle">Circle (radius)</option>
+      <option value="rect">Rectangle (halfW × halfD)</option>
+    </select>
+    <div id="bounds-circle-section">
+      <div class="row"><label>Radius</label><span class="val" id="br-val">8.00</span></div>
+    </div>
+    <div id="bounds-rect-section" style="display:none">
+      <div class="row"><label>Half-width X</label><span class="val" id="bhw-val">6.00</span></div>
+      <div class="row"><label>Half-depth Z</label><span class="val" id="bhd-val">4.00</span></div>
+    </div>
+
+    <h3>Camera behaviour</h3>
+    <label class="check-row">
+      <input type="checkbox" id="linear">
+      <span>Lock orbit (linear)</span>
+    </label>
+    <div class="desc">Camera stays fixed behind fighters — good for single-sided sceneries (dojo, alley).</div>
+
+    <h3>Export</h3>
+    <button class="primary" id="copy-btn">Copy config to clipboard</button>
+    <div id="output"></div>
+
+    <h3>Camera</h3>
+    <button id="reset-cam">Reset to game start angle</button>
+
+    <p class="help">
+      Left-drag: orbit · Right-drag: pan · Wheel: zoom<br>
+      <strong style="color:#8cf">Drag value</strong> to adjust · <strong style="color:#8cf">Shift+drag</strong> = fine · <strong style="color:#8cf">Dbl-click</strong> = type<br>
+      Blue line = fighter positions (x=±3, z=0).
+    </p>
+  </div>
+  <div id="status">loading...</div>
+  <script type="module" src="/src/arena-debug-page.ts"></script>
+</body>
+</html>

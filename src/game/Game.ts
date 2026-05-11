@@ -25,6 +25,7 @@ import { FightCamera } from '../Camera';
 import { CharSelect } from '../CharSelect';
 import { CombatSystem } from '../combat/CombatSystem';
 import { GAME_CONSTANTS } from '../constants';
+import { JiggleDebug } from '../debug/JiggleDebug';
 import { NetworkOverlay } from '../debug/NetworkOverlay';
 import { CHARACTERS, DEFAULT_P1, DEFAULT_P2 } from '../fighter/characters';
 import { Fighter, type SharedAssets } from '../fighter/Fighter';
@@ -70,6 +71,8 @@ export class Game {
   charSelect: CharSelect | null = null;
   _pendingMode: 'practice' | 'online' = 'practice';
   _pendingCharId: string = DEFAULT_P1;
+  /** Selected arena id; persists across matches. Practice mode is locked to default. */
+  currentArenaId: string = 'default';
   round: number;
   roundTimer: number;
   roundTimerAccum: number;
@@ -106,6 +109,7 @@ export class Game {
   private _pipeline: DefaultRenderingPipeline | null = null;
   private botAI = new BotAI();
   _netOverlay: NetworkOverlay | null = null;
+  private _jiggleDebug: JiggleDebug | null = null;
   // Practice pause menu (ESC toggled)
   private _practiceMenuEl: HTMLDivElement | null = null;
   private _practicePaused = false;
@@ -207,6 +211,7 @@ export class Game {
     this._pipeline.bloomKernel = 64;
     this._pipeline.bloomScale = 0.5;
 
+    // GlowLayer for per-character emissive glow (e.g. hanna's robot parts).
     // ACES tone mapping + slight contrast boost — kills the washed-out plastic look
     const imgProc = this.scene.imageProcessingConfiguration;
     imgProc.toneMappingEnabled = true;
@@ -276,7 +281,17 @@ export class Game {
   async init() {
     this.ui.setLoadingText('Loading assets...');
 
-    this.stage = new Stage(this.scene);
+    // Allow ?arena=ID URL param to preselect an arena (handy for dev/screenshots).
+    const urlArena = new URLSearchParams(window.location.search).get('arena');
+    if (urlArena) this.currentArenaId = urlArena;
+
+    this.stage = new Stage(this.scene, this.currentArenaId);
+    this.fightCamera.lockOrbit = !!this.stage.arena.linear;
+    this.fightCamera.orbitAngle = -Math.PI / 2;
+    this.fightCamera.pitchOffset = this.stage.arena.cameraPitch ?? 0;
+    this.fightCamera.snapOrbit();
+    Fighter.arenaBounds = this.stage.arena.bounds ?? null;
+    Fighter.fixedCam = !!this.stage.arena.linear;
 
     const charEntries = Object.values(CHARACTERS);
     let loaded = 0;
@@ -285,6 +300,8 @@ export class Game {
         this.ui.setLoadingProgress((loaded + p) / charEntries.length);
       });
       assets.scale = meta.scale;
+      assets.jiggle = meta.jiggle;
+      assets.glowEmissive = meta.glowEmissive;
       this.allCharAssets.set(meta.id, assets);
       loaded++;
     }
@@ -296,6 +313,7 @@ export class Game {
     void this.bgm.load(this.scene);
 
     this.charSelect = new CharSelect(this.scene, this.camera, this.allCharAssets);
+    this.charSelect.setShadowGenerator(this.stage?.shadowGenerator ?? null);
     this.createFighters();
 
     this.ui.setLoadingProgress(1);
@@ -330,7 +348,8 @@ export class Game {
   reinitFighter(idx: 0 | 1, charId: string) {
     const assets = this.allCharAssets.get(charId) ?? this.allCharAssets.get(DEFAULT_P1);
     if (!assets) return;
-    this.fighters[idx]?.dispose();
+    const old = this.fighters[idx];
+    if (old) old.dispose();
     const fighter = new Fighter(idx, this.scene);
     fighter.init(assets);
     this.fighters[idx] = fighter;
@@ -358,32 +377,116 @@ export class Game {
       this.network.joinMatch(name, this._pendingCharId);
     }
 
-    this.charSelect?.show(mode, {
-      onConfirm: (p1Id, p2Id) => this._onCharSelectConfirm(p1Id, p2Id),
-      onPick: (charId) => {
-        this._pendingCharId = charId;
-        this.network.sendPick(charId);
+    this.charSelect?.show(
+      mode,
+      {
+        onConfirm: (p1Id, p2Id, arenaId) => this._onCharSelectConfirm(p1Id, p2Id, arenaId),
+        onPick: (charId) => {
+          this._pendingCharId = charId;
+          this.network.sendPick(charId);
+        },
+        onArenaPick: (arenaId) => {
+          this.network.sendArenaPick(arenaId);
+        },
+        onArenaPreview: (arenaId) => {
+          this.setArena(arenaId);
+        },
+        onReady: () => {
+          this.network.sendReady();
+        },
+        onBack: () => {
+          if (mode === 'online') this.network.leave();
+          this.charSelect?.hide();
+          for (const f of this.fighters) f?.rootNode?.setEnabled(true);
+          this.state = GAME_STATE.MENU;
+          this.ui.showScreen('menu-screen');
+        },
       },
-      onReady: () => {
-        this.network.sendReady();
-      },
-      onBack: () => {
-        if (mode === 'online') this.network.leave();
-        this.charSelect?.hide();
-        for (const f of this.fighters) f?.rootNode?.setEnabled(true);
-        this.state = GAME_STATE.MENU;
-        this.ui.showScreen('menu-screen');
-      },
-    });
+      this.currentArenaId,
+    );
   }
 
-  private _onCharSelectConfirm(p1Id: string, p2Id: string) {
+  private _onCharSelectConfirm(p1Id: string, p2Id: string, arenaId: string) {
     this.charSelect?.hide();
     if (this._pendingMode === 'practice') {
+      // Practice arena selection is honoured here. Online resolves arena
+      // separately from server-reconciled votes, and never reaches this path.
+      if (arenaId !== this.currentArenaId) {
+        this.setArena(arenaId);
+      }
       this.reinitFighter(0, p1Id);
       this.reinitFighter(1, p2Id);
       this.startPractice();
     }
+  }
+
+  /** Tear down the current arena meshes and rebuild Stage with the new id.
+   * Fighters and UI are untouched — only stage scenery, sky, lights and
+   * camera-orbit lock are swapped. */
+  setArena(arenaId: string): void {
+    if (arenaId === this.currentArenaId && this.stage) return;
+    this.currentArenaId = arenaId;
+    this._disposeStageMeshes();
+    this.stage = new Stage(this.scene, arenaId);
+    this.fightCamera.lockOrbit = !!this.stage.arena.linear;
+    this.fightCamera.orbitAngle = -Math.PI / 2;
+    this.fightCamera.pitchOffset = this.stage.arena.cameraPitch ?? 0;
+    this.fightCamera.snapOrbit();
+    Fighter.arenaBounds = this.stage.arena.bounds ?? null;
+    Fighter.fixedCam = !!this.stage.arena.linear;
+    this.charSelect?.setShadowGenerator(this.stage.shadowGenerator);
+  }
+
+  /** Remove every mesh / light that the previous Stage created. Identifies
+   * stage meshes as those neither owned by a Fighter nor part of CharSelect
+   * nor a character template. The character templates are scene-resident
+   * disabled meshes used as clone sources (Fighter.SharedAssets.baseMeshes)
+   * — disposing them kills the materials shared with every fighter and the
+   * lineup characters in CharSelect, so they must be spared. */
+  private _disposeStageMeshes(): void {
+    const sparedRoots = new Set<unknown>();
+    for (const f of this.fighters) {
+      if (f?.rootNode) sparedRoots.add(f.rootNode);
+    }
+    for (const r of this.charSelect?.displayRoots ?? []) {
+      sparedRoots.add(r);
+    }
+    // Spare every imported GLB root that hosts a character template. We can't
+    // walk to a single ancestor reliably (Babylon glTF loaders nest a few
+    // empties), so add every base mesh and every transform node above it.
+    for (const assets of this.allCharAssets.values()) {
+      for (const baseMesh of assets.baseMeshes) {
+        sparedRoots.add(baseMesh);
+        let p: unknown = baseMesh.parent;
+        while (p) {
+          sparedRoots.add(p);
+          p = (p as { parent: unknown }).parent;
+        }
+      }
+    }
+    const isSpared = (m: { parent: unknown }): boolean => {
+      if (sparedRoots.has(m as unknown)) return true;
+      let p: unknown = m.parent;
+      while (p) {
+        if (sparedRoots.has(p)) return true;
+        p = (p as { parent: unknown }).parent;
+      }
+      return false;
+    };
+    this.stage?.shadowGenerator?.dispose();
+    for (const mesh of [...this.scene.meshes]) {
+      if (!isSpared(mesh)) mesh.dispose(false, true);
+    }
+    for (const tn of [...this.scene.transformNodes]) {
+      if (!isSpared(tn)) tn.dispose(false, true);
+    }
+    for (const light of [...this.scene.lights]) {
+      light.dispose(false, true);
+    }
+    for (const mat of [...this.scene.materials]) {
+      if (mat.getBindedMeshes().length === 0) mat.dispose(true, true);
+    }
+    this.scene.resetDrawCache();
   }
 
   prepareMatch() {
@@ -422,12 +525,21 @@ export class Game {
       console.log(`[SYNC] Rollback netcode active (RTT=${this.network.rtt}ms)`);
       // Create network overlay for online matches (F3 to toggle)
       this._netOverlay?.dispose();
-      this._netOverlay = new NetworkOverlay(this.network);
+      this._netOverlay = new NetworkOverlay(this.network, 'online', {
+        scene: this.scene,
+        canvas: this.canvas,
+        gameCamera: this.camera,
+        setDebugBones: (on) => this._setJiggleDebug(on),
+      });
     } else {
       this.rollbackManager = null;
-      // F3 overlay available in practice mode too (FPS/frame display)
       this._netOverlay?.dispose();
-      this._netOverlay = new NetworkOverlay(null, 'practice');
+      this._netOverlay = new NetworkOverlay(null, 'practice', {
+        scene: this.scene,
+        canvas: this.canvas,
+        gameCamera: this.camera,
+        setDebugBones: (on) => this._setJiggleDebug(on),
+      });
       this._createPracticeMenu();
     }
     this._diag = makeDiag();
@@ -719,6 +831,20 @@ export class Game {
     if (!f1 || !f2) return;
 
     const p2Input = this.botAI.getInput(f2, f1);
+    if (Fighter.fixedCam) {
+      const tmpL = p2Input.left;
+      const tmpR = p2Input.right;
+      const tmpLJ = p2Input.leftJust;
+      const tmpRJ = p2Input.rightJust;
+      const tmpDL = p2Input.dashLeft;
+      const tmpDR = p2Input.dashRight;
+      p2Input.left = tmpR;
+      p2Input.right = tmpL;
+      p2Input.leftJust = tmpRJ;
+      p2Input.rightJust = tmpLJ;
+      p2Input.dashLeft = tmpDR;
+      p2Input.dashRight = tmpDL;
+    }
     this._runSimulationStep(rawInput, p2Input);
   }
 
@@ -1300,9 +1426,11 @@ export class Game {
       } else {
         if (f1) f1.updateVisuals();
         if (f2) f2.updateVisuals();
+        if (f1) f1.updateJiggle(deltaTime * 1000);
+        if (f2) f2.updateJiggle(deltaTime * 1000);
       }
 
-      if (f1 && f2) {
+      if (f1 && f2 && !this._netOverlay?.freeCamActive) {
         this.fightCamera.update(f1.position, f2.position, deltaTime, this.localPlayerIndex);
       }
     }
@@ -1317,6 +1445,14 @@ export class Game {
       this._inputDelayFrames,
       this.engine.getFps(),
     );
+    this._jiggleDebug?.update();
+  }
+
+  private _setJiggleDebug(on: boolean): void {
+    if (on && !this._jiggleDebug) {
+      this._jiggleDebug = new JiggleDebug(this.scene, () => this.fighters);
+    }
+    this._jiggleDebug?.setEnabled(on);
   }
 
   private _onResize() {

@@ -24,6 +24,7 @@ import {
   TransformNode,
   Vector3,
 } from '@babylonjs/core';
+import type { ArenaBounds } from '../arenas';
 import type { HitResult, MoveData } from '../combat/CombatSystem';
 import { MOVES } from '../combat/moves';
 import { FIGHTER_STATE, GAME_CONSTANTS, HIT_RESULT } from '../constants';
@@ -55,6 +56,7 @@ import {
   handleStandingState,
   handleStunState,
 } from './FighterStateHandlers';
+import { type JiggleConfig, JiggleSim } from './JiggleSim';
 
 export interface SharedAssets {
   baseMeshes: AbstractMesh[];
@@ -62,6 +64,11 @@ export interface SharedAssets {
   animGroups: Record<string, AnimationGroup>;
   /** Runtime uniform scale applied to the fighter's root node */
   scale?: number;
+  /** Unified jiggle/cloth configuration — bones, colliders (sphere/capsule
+   * + plate), lateral pairs. Set from CharacterMeta. */
+  jiggle?: JiggleConfig;
+  /** If true, meshes with emissive material should be registered with the scene GlowLayer. */
+  glowEmissive?: boolean;
 }
 
 const GC = GAME_CONSTANTS;
@@ -111,6 +118,10 @@ export interface FighterSnapshot {
 }
 
 export class Fighter {
+  /** Per-arena fight bound. Null = default radial clamp (radius 12). */
+  static arenaBounds: ArenaBounds | null = null;
+  static fixedCam: boolean = false;
+
   playerIndex: number;
   scene: Scene;
   rootNode: TransformNode | null;
@@ -161,6 +172,11 @@ export class Fighter {
   _introTimeout: ReturnType<typeof setTimeout> | null = null;
   private _composite!: CompositeAnimController;
   private _skeleton: Skeleton | null = null;
+  private _jiggleSim: JiggleSim | null = null;
+
+  get jiggleSim(): JiggleSim | null {
+    return this._jiggleSim;
+  }
 
   // Visual interpolation for remote fighter — smooths rollback corrections
   // so the opponent doesn't visually teleport when mispredictions are corrected.
@@ -290,6 +306,20 @@ export class Fighter {
       if (m.material instanceof PBRMaterial) {
         m.material.directIntensity = 2.5;
         m.material.environmentIntensity = 0;
+        // Boost emissive strength so GlowLayer has enough signal to work with.
+        // GLB bakes Blender emissive strength into emissiveFactor which is often very small.
+        // Clamp to 1 per channel to preserve the hue rather than blowing out to white.
+        if (
+          m.material.emissiveColor.r > 0 ||
+          m.material.emissiveColor.g > 0 ||
+          m.material.emissiveColor.b > 0
+        ) {
+          const e = m.material.emissiveColor;
+          e.scaleToRef(20, e);
+          e.r = Math.min(e.r, 1);
+          e.g = Math.min(e.g, 1);
+          e.b = Math.min(e.b, 1);
+        }
       }
     }
 
@@ -333,6 +363,10 @@ export class Fighter {
     this._composite = new CompositeAnimController(this.scene, this.playerIndex);
     this._composite.build(this.animGroups);
 
+    if (assets.jiggle?.bones.length && clonedSkeleton) {
+      this._jiggleSim = new JiggleSim(clonedSkeleton, assets.jiggle, this.rootNode);
+    }
+
     this.rootNode.position.copyFrom(this.position);
     // initRotY must match PI/2 - facingAngle used in updateVisuals().
     // P0 facingAngle=0  → PI/2;  P1 facingAngle=PI → -PI/2
@@ -349,6 +383,8 @@ export class Fighter {
       clearTimeout(this._introTimeout);
       this._introTimeout = null;
     }
+    this._jiggleSim?.dispose();
+    this._jiggleSim = null;
     this._destroySuperEffects();
     this._highlightLayer?.dispose();
     this._highlightLayer = null;
@@ -612,6 +648,7 @@ export class Fighter {
     this.runFrames = 0;
     this.landingTimer = 0;
     this.hitFlash = 0;
+    this._applyEmissiveFlash(false);
     if (this.superPowerActive || this._superWasActivatedThisRound) {
       this.superMeter = 0;
     }
@@ -628,6 +665,7 @@ export class Fighter {
     }
 
     this.playAnimation('combatIdle');
+    this._jiggleSim?.reset();
   }
 
   snapshotSim(): FighterSnapshot {
@@ -786,23 +824,31 @@ export class Fighter {
 
   getRelativeInput(input: InputState): InputState {
     const rel = { ...input };
+    const p2fixed = Fighter.fixedCam && this.playerIndex === 1;
+    const srcLeft = p2fixed ? input.right : input.left;
+    const srcRight = p2fixed ? input.left : input.right;
+    const srcLeftJust = p2fixed ? input.rightJust : input.leftJust;
+    const srcRightJust = p2fixed ? input.leftJust : input.rightJust;
+    const srcDashLeft = p2fixed ? input.dashRight : input.dashLeft;
+    const srcDashRight = p2fixed ? input.dashLeft : input.dashRight;
     if (this.facing > 0) {
-      rel.forward = input.right;
-      rel.back = input.left;
-      rel.forwardJust = input.rightJust;
-      rel.backJust = input.leftJust;
+      rel.forward = srcRight;
+      rel.back = srcLeft;
+      rel.forwardJust = srcRightJust;
+      rel.backJust = srcLeftJust;
+      rel.dashForward = srcDashRight;
+      rel.dashBack = srcDashLeft;
     } else {
-      rel.forward = input.left;
-      rel.back = input.right;
-      rel.forwardJust = input.leftJust;
-      rel.backJust = input.rightJust;
+      rel.forward = srcLeft;
+      rel.back = srcRight;
+      rel.forwardJust = srcLeftJust;
+      rel.backJust = srcRightJust;
+      rel.dashForward = srcDashLeft;
+      rel.dashBack = srcDashRight;
     }
-    if (this.facing > 0) {
-      rel.dashForward = input.dashRight;
-      rel.dashBack = input.dashLeft;
-    } else {
-      rel.dashForward = input.dashLeft;
-      rel.dashBack = input.dashRight;
+    if (Fighter.fixedCam) {
+      rel.sideStepUp = false;
+      rel.sideStepDown = false;
     }
     return rel;
   }
@@ -935,14 +981,23 @@ export class Fighter {
       this.velocity.y = 0;
     }
 
-    const arenaRadius = GC.ARENA_WIDTH;
-    const distFromCenter = Math.sqrt(
-      this.position.x * this.position.x + this.position.z * this.position.z,
-    );
-    if (distFromCenter > arenaRadius) {
-      const scale = arenaRadius / distFromCenter;
-      this.position.x *= scale;
-      this.position.z *= scale;
+    // Optional rectangular bound (set per-arena for walled sceneries) overrides
+    // the default radial clamp. Static field — Game updates it when an arena
+    // with a `bounds` config is loaded.
+    const b = Fighter.arenaBounds;
+    if (b?.kind === 'rect') {
+      if (this.position.x > b.halfWidth) this.position.x = b.halfWidth;
+      else if (this.position.x < -b.halfWidth) this.position.x = -b.halfWidth;
+      if (this.position.z > b.halfDepth) this.position.z = b.halfDepth;
+      else if (this.position.z < -b.halfDepth) this.position.z = -b.halfDepth;
+    } else {
+      const radius = b?.kind === 'circle' ? b.radius : GC.ARENA_WIDTH;
+      const dist = Math.sqrt(this.position.x * this.position.x + this.position.z * this.position.z);
+      if (dist > radius) {
+        const scale = radius / dist;
+        this.position.x *= scale;
+        this.position.z *= scale;
+      }
     }
 
     if (Math.abs(this.velocity.z) > 0.001) {
@@ -973,6 +1028,10 @@ export class Fighter {
         mat.emissiveColor = emissive;
       }
     }
+  }
+
+  updateJiggle(deltaTimeMs: number) {
+    this._jiggleSim?.update(deltaTimeMs);
   }
 
   updateVisuals() {

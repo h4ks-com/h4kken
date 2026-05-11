@@ -90,12 +90,17 @@ interface PlayerInfo {
   characterId: string;
   roomId: string | null;
   playerIndex: number | null;
+  /** Player's arena vote. 'random' (or null) means "I don't care"; reconciled
+   * server-side at match-start. Updated whenever the player picks during the
+   * lobby phase. */
+  arenaVote: string;
 }
 
 interface ClientMessage {
   type: string;
   name?: string;
   characterId?: string;
+  arenaId?: string;
   frame?: number;
   targetFrame?: number;
   input?: unknown;
@@ -254,6 +259,42 @@ function handlePick(playerInfo: PlayerInfo, characterId: string | undefined) {
   sendTo(room.players[opponentIdx], { type: 'opponentPick', characterId });
 }
 
+function handlePickArena(playerInfo: PlayerInfo, arenaId: string | undefined) {
+  if (!arenaId) return;
+  playerInfo.arenaVote = arenaId;
+  if (!playerInfo.roomId) return;
+  const room = rooms.get(playerInfo.roomId);
+  if (!room || room.state !== 'lobby') return;
+  const idx = playerInfo.playerIndex ?? -1;
+  if (idx < 0 || idx > 1) return;
+  const opponentIdx = idx === 0 ? 1 : 0;
+  sendTo(room.players[opponentIdx], { type: 'opponentArena', arenaId });
+}
+
+/** Reconcile two arena votes per the agreed rules:
+ *  - same vote (both same id, even if both 'random') → that vote
+ *  - one 'random' → use the other's pick
+ *  - two distinct picks → 50/50 between them
+ *  - both 'random' → uniform random over the known arena ids
+ *
+ * Server is the authority — both clients receive the same arenaId in `matched`. */
+function reconcileArenaVotes(a: string, b: string, knownArenas: readonly string[]): string {
+  if (a === b) {
+    return a === 'random'
+      ? (knownArenas[Math.floor(Math.random() * knownArenas.length)] ?? 'default')
+      : a;
+  }
+  if (a === 'random') return b;
+  if (b === 'random') return a;
+  return Math.random() < 0.5 ? a : b;
+}
+
+// Mirror of src/arenas registry — kept here so the server can roll a random
+// arena server-side without importing client code. Update both when adding an
+// arena. The client validates against its own registry too — unknown ids fall
+// through to 'default'.
+const KNOWN_ARENAS: readonly string[] = ['default', 'dojo', 'colosseum', 'temple', 'sky_temple'];
+
 function handleReady(playerInfo: PlayerInfo) {
   if (!playerInfo.roomId) return;
   const room = rooms.get(playerInfo.roomId);
@@ -266,12 +307,14 @@ function handleReady(playerInfo: PlayerInfo) {
   if (room.lobbyReady[0] && room.lobbyReady[1]) {
     const p0 = room.players[0];
     const p1 = room.players[1];
+    const arenaId = reconcileArenaVotes(p0.arenaVote, p1.arenaVote, KNOWN_ARENAS);
     sendTo(p0, {
       type: 'matched',
       playerIndex: 0,
       opponentName: p1.name,
       roomId: room.id,
       opponentCharacterId: p1.characterId,
+      arenaId,
     });
     sendTo(p1, {
       type: 'matched',
@@ -279,6 +322,7 @@ function handleReady(playerInfo: PlayerInfo) {
       opponentName: p0.name,
       roomId: room.id,
       opponentCharacterId: p0.characterId,
+      arenaId,
     });
     setTimeout(() => startCountdown(room), 1000);
   }
@@ -413,6 +457,7 @@ wss.on('connection', (ws, req) => {
     characterId: 'beano',
     roomId: null,
     playerIndex: null,
+    arenaVote: 'random',
   };
 
   ws.on('message', (data) => {
@@ -435,6 +480,9 @@ wss.on('connection', (ws, req) => {
         break;
       case 'pick':
         handlePick(playerInfo, msg.characterId);
+        break;
+      case 'pickArena':
+        handlePickArena(playerInfo, msg.arenaId);
         break;
       case 'ready':
         handleReady(playerInfo);
